@@ -173,26 +173,36 @@ export default function App() {
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
-  // --- BARCODE SCANNER LOGIK (MIT CRASH-SCHUTZ) ---
-  const stopScannerSafely = async () => {
-    if (scannerRef.current) {
-      try {
-        await scannerRef.current.stop();
-        scannerRef.current.clear();
-      } catch (e) {
-        console.warn("Kamera konnte nicht sanft gestoppt werden.", e);
+  // --- BARCODE SCANNER LOGIK (ABSTURZ-SICHER) ---
+  const stopScannerSafely = () => {
+    return new Promise((resolve) => {
+      if (scannerRef.current) {
+        scannerRef.current.stop()
+          .then(() => {
+            scannerRef.current.clear();
+            scannerRef.current = null;
+            resolve();
+          })
+          .catch((e) => {
+            console.warn("Scanner konnte nicht sauber stoppen", e);
+            scannerRef.current = null;
+            resolve();
+          });
+      } else {
+        resolve();
       }
-      scannerRef.current = null;
-    }
+    });
   };
 
   const handleBarcodeScanned = async (barcode) => {
     if (!barcode.trim()) return;
     
-    // WICHTIG: ZUERST die Kamera stoppen, BEVOR sich das UI ändert und die Kamera-Box gelöscht wird!
+    // UI auf "Laden" stellen (das Video wird jetzt nur überlagert, nicht gelöscht)
+    setScanStatus('loading');
+    
+    // Kamera sicher im Hintergrund stoppen
     await stopScannerSafely();
 
-    setScanStatus('loading');
     try {
       const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode.trim()}.json`);
       const data = await res.json();
@@ -203,12 +213,13 @@ export default function App() {
         const brandStr = p.brands ? String(p.brands).split(',')[0] : '';
         const brand = brandStr ? ` (${brandStr})` : '';
         
-        // Sicherheits-Check: Falls die Werte fehlen oder Text sind, werden sie 0
+        // Sicherheits-Check gegen Text oder undefinierte Werte
         const kcal = Number(p.nutriments?.['energy-kcal_100g']) || 0;
         const fat = Number(p.nutriments?.fat_100g) || 0;
         
-        // Automatische Punkteberechnung nach Formel
-        const points = Math.round(((kcal / 60) + (fat / 9)) * 2) / 2;
+        // Formel berechnen und gegen NaN (Not a Number) absichern
+        let points = Math.round(((kcal / 60) + (fat / 9)) * 2) / 2;
+        if (isNaN(points)) points = 0;
 
         setIsScanning(false);
         setScanStatus(null);
@@ -220,7 +231,7 @@ export default function App() {
           category: '', 
           kcal: kcal,
           fett: fat,
-          points: points || 0, // Fallback auf 0 Punkte
+          points: points,
           isCustom: true
         });
         setShowNewCategoryInput(false);
@@ -239,29 +250,28 @@ export default function App() {
     setManualBarcode('');
   };
 
+  // Kamera starten und stoppen
   useEffect(() => {
-    if (isScanning && !scanStatus) {
-      const startCamera = async () => {
-        // Kurze Pause, damit die "reader" Box wirklich auf dem Bildschirm ist
-        setTimeout(async () => {
+    if (isScanning) {
+      const startCamera = () => {
+        // Kurzer Delay, um sicherzugehen, dass das DOM Element wirklich da ist
+        setTimeout(() => {
           const Html5Qrcode = window.Html5Qrcode;
           if (!Html5Qrcode || !document.getElementById('reader')) return;
 
           scannerRef.current = new Html5Qrcode("reader");
-          try {
-            await scannerRef.current.start(
-              { facingMode: "environment" },
-              { fps: 10, qrbox: { width: 250, height: 250 } },
-              async (decodedText) => {
-                handleBarcodeScanned(decodedText);
-              },
-              (errorMessage) => { /* Ignorieren bei Nicht-Erkennung */ }
-            );
-          } catch (err) {
+          scannerRef.current.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText) => {
+              handleBarcodeScanned(decodedText);
+            },
+            (errorMessage) => { /* Wird bei jedem Frame ohne Barcode aufgerufen -> ignorieren */ }
+          ).catch(err => {
             console.error("Camera start failed", err);
-            // Läuft still im Hintergrund weiter -> Manuelle Eingabe ist ja da.
-          }
-        }, 100); 
+            // Wir ignorieren den Error im UI, da die manuelle Eingabe als Fallback da ist.
+          });
+        }, 100);
       };
 
       if (!window.Html5Qrcode) {
@@ -274,13 +284,10 @@ export default function App() {
       }
     }
 
-    // Wenn die Komponente stirbt, räumen wir die Kamera sauber auf
     return () => {
-      if (scannerRef.current) {
-        scannerRef.current.stop().then(() => scannerRef.current.clear()).catch(() => {});
-      }
+      stopScannerSafely();
     }
-  }, [isScanning, scanStatus]);
+  }, [isScanning]); // WICHTIG: scanStatus wurde entfernt, damit Re-Renders die Kamera nicht stören!
 
   // --- AUTHENTICATION ACTIONS ---
   const handleAuth = async (e) => {
@@ -559,6 +566,20 @@ export default function App() {
     );
   }
 
+  // SPERRBILDSCHIRM
+  if (userProfile?.isDeleted) {
+    return (
+      <div className="min-h-screen bg-[#F2F2F7] dark:bg-black flex items-center justify-center p-6 text-center">
+        <div className="bg-white dark:bg-[#1C1C1E] p-8 rounded-3xl shadow-xl max-w-sm w-full">
+          <Shield className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Account gesperrt</h1>
+          <p className="text-gray-500 dark:text-gray-400 mb-6">Dein Account wurde von einem Administrator deaktiviert.</p>
+          <button onClick={handleLogout} className="px-6 py-2 bg-gray-200 dark:bg-[#2C2C2E] text-gray-900 dark:text-white rounded-xl font-bold">Abmelden</button>
+        </div>
+      </div>
+    );
+  }
+
   const renderDashboard = () => {
     const remainingPoints = dailyGoal - todayPoints;
     const isOverBudget = remainingPoints < 0;
@@ -783,7 +804,7 @@ export default function App() {
       </button>
 
       <div className="text-center mt-8">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v5.1 (Scanner Edition)</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v5.2 (Stabile Scanner Edition)</p>
         <p className="text-xs text-gray-400 mt-1">
           Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'}
         </p>
@@ -857,57 +878,63 @@ export default function App() {
         {/* MODAL: BARCODE SCANNER */}
         {isScanning && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
-            <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-6 relative overflow-hidden flex flex-col">
-              <div className="flex justify-between items-center mb-4">
+            <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-6 relative overflow-hidden flex flex-col min-h-[400px]">
+              
+              <div className="flex justify-between items-center mb-4 z-20 relative">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">Barcode scannen</h3>
                 <button onClick={closeScanner} className="p-2 bg-gray-100 dark:bg-[#2C2C2E] rounded-full text-gray-500">
                   <X size={20} />
                 </button>
               </div>
 
-              {scanStatus === 'loading' ? (
-                <div className="py-12 flex flex-col items-center justify-center text-center">
+              {/* OVERLAY: LÄDT */}
+              {scanStatus === 'loading' && (
+                <div className="absolute inset-0 z-10 bg-white/95 dark:bg-[#1C1C1E]/95 flex flex-col items-center justify-center text-center px-4">
                    <div className="w-12 h-12 border-4 border-blue-500 dark:border-teal-500 border-t-transparent rounded-full animate-spin mb-4"></div>
                    <p className="text-gray-600 dark:text-gray-300 font-medium">Produkt wird in der Datenbank gesucht...</p>
                 </div>
-              ) : scanStatus === 'not_found' ? (
-                <div className="py-8 text-center animate-in fade-in zoom-in duration-300">
+              )}
+
+              {/* OVERLAY: NICHT GEFUNDEN */}
+              {scanStatus === 'not_found' && (
+                <div className="absolute inset-0 z-10 bg-white dark:bg-[#1C1C1E] flex flex-col items-center justify-center text-center px-6 animate-in fade-in zoom-in duration-300">
                    <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
                      <Search size={28}/>
                    </div>
                    <p className="text-gray-900 dark:text-white text-xl font-bold mb-2">Nicht gefunden</p>
-                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Dieses Produkt ist noch nicht in der Datenbank.</p>
+                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Dieses Produkt ist noch nicht in der weltweiten Datenbank.</p>
                    <button onClick={() => { closeScanner(); setEditingFood({ id: '', name: '', category: '', kcal: '', fett: '', points: 0, isCustom: true }); setShowNewCategoryInput(false); }} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white rounded-2xl font-bold shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30">
                      Manuell anlegen
                    </button>
                 </div>
-              ) : (
-                <div className="flex flex-col gap-4">
-                   <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden shadow-inner aspect-square relative flex items-center justify-center border-2 border-gray-100 dark:border-[#2C2C2E]">
-                      <p className="text-gray-500 text-sm absolute">Kamera wird gestartet...</p>
-                   </div>
-                   
-                   <div className="bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl p-4 mt-2 border border-gray-100 dark:border-gray-800">
-                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 text-center">Fokus klappt nicht?</p>
-                     <div className="flex gap-2">
-                       <input 
-                         type="number" 
-                         placeholder="Zahl unterm Barcode..." 
-                         value={manualBarcode} 
-                         onChange={e => setManualBarcode(e.target.value)} 
-                         className="flex-1 bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white px-3 py-2 rounded-xl outline-none text-sm focus:ring-2 ring-blue-500 dark:ring-teal-500"
-                       />
-                       <button 
-                         onClick={() => handleBarcodeScanned(manualBarcode)}
-                         disabled={!manualBarcode}
-                         className="bg-blue-500 dark:bg-teal-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white px-4 py-2 rounded-xl font-bold text-sm"
-                       >
-                         Suchen
-                       </button>
-                     </div>
-                   </div>
-                </div>
               )}
+
+              {/* KAMERA-CONTAINER (Bleibt immer im DOM verankert, wird nur verdeckt!) */}
+              <div className="flex flex-col gap-4 relative z-0">
+                 <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden shadow-inner aspect-square relative flex items-center justify-center border-2 border-gray-100 dark:border-[#2C2C2E]">
+                    <p className="text-gray-500 text-sm absolute">Kamera wird gestartet...</p>
+                 </div>
+                 
+                 <div className="bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl p-4 border border-gray-100 dark:border-gray-800">
+                   <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 text-center">Fokus klappt nicht?</p>
+                   <div className="flex gap-2">
+                     <input 
+                       type="number" 
+                       placeholder="Zahl unter Barcode..." 
+                       value={manualBarcode} 
+                       onChange={e => setManualBarcode(e.target.value)} 
+                       className="flex-1 w-full bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white px-3 py-2 rounded-xl outline-none text-sm focus:ring-2 ring-blue-500 dark:ring-teal-500"
+                     />
+                     <button 
+                       onClick={() => handleBarcodeScanned(manualBarcode)}
+                       disabled={!manualBarcode}
+                       className="bg-blue-500 dark:bg-teal-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white px-4 py-2 rounded-xl font-bold text-sm"
+                     >
+                       Suchen
+                     </button>
+                   </div>
+                 </div>
+              </div>
             </div>
           </div>
         )}
