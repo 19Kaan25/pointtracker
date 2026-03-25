@@ -56,7 +56,21 @@ const usernameToFakeEmail = (uname) => {
   return `${hex}@pointtracker.local`;
 };
 
-// NEU: Beschriftungen für das Custom-Select Feld
+// NEU: Intelligente Text-Analyse für unsaubere Datenbanken
+const parseFoodQuantity = (name) => {
+  if (!name) return null;
+  // Sucht nach Zahlen (auch Kommazahlen) direkt gefolgt von g oder ml
+  const match = name.match(/(\d+(?:[.,]\d+)?)\s*(g|ml)\b/i);
+  if (match) {
+    return {
+      baseAmount: parseFloat(match[1].replace(',', '.')),
+      unit: match[2].toLowerCase(),
+      fullMatch: match[0]
+    };
+  }
+  return null;
+};
+
 const sortLabels = {
   name_asc: "A - Z",
   name_desc: "Z - A",
@@ -88,7 +102,10 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(''); 
   const [sortOption, setSortOption] = useState('name_asc');
+  
   const [selectedFood, setSelectedFood] = useState(null);
+  const [amountInput, setAmountInput] = useState(''); // NEU: State für dynamische Eingabe
+  
   const [editingFood, setEditingFood] = useState(null);
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
   const [dailyGoal, setDailyGoal] = useState(30);
@@ -357,20 +374,12 @@ export default function App() {
     for (const log of logs) {
       if (!uniqueIds.has(log.foodId)) {
         uniqueIds.add(log.foodId);
-        
         const foodObj = allFoods.find(f => f.id === log.foodId);
         if (foodObj) {
           recents.push(foodObj);
         } else {
-          recents.push({ 
-            id: log.foodId, 
-            name: log.name, 
-            category: log.category, 
-            points: log.points / log.multiplier, 
-            isCustom: false 
-          });
+          recents.push({ id: log.foodId, name: log.name, category: log.category, points: log.points / log.multiplier, isCustom: false });
         }
-        
         if (recents.length >= 20) break;
       }
     }
@@ -392,11 +401,9 @@ export default function App() {
     let result = baseList.filter((food) => {
       const searchableText = `${food.name} ${food.category}`.toLowerCase();
       const matchesSearch = searchTerms.every(term => searchableText.includes(term));
-      
       const matchesCategory = (selectedCategory && selectedCategory !== '___RECENT___' && selectedCategory !== '___FAVORITES___') 
         ? food.category === selectedCategory 
         : true;
-        
       return matchesSearch && matchesCategory;
     });
 
@@ -438,17 +445,51 @@ export default function App() {
     return { todayLogs: todayL, todayPoints: tPoints, groupedHistory: historyArray };
   }, [logs]);
 
-  // --- ACTIONS ---
-  const handleAddLog = async (food, multiplier = 1) => {
-    if (!user) return;
+  // --- ACTIONS (Essen Loggen mit intelligenten Portionen) ---
+  const handleAddLogSubmit = async () => {
+    if (!user || !selectedFood) return;
+    
+    const currentInputVal = parseFloat(amountInput);
+    if (isNaN(currentInputVal) || currentInputVal <= 0) return; // Ungültige Eingaben ignorieren
+
+    const parsed = parseFoodQuantity(selectedFood.name);
+    const isWeightBased = !!parsed;
+    const baseAmount = parsed ? parsed.baseAmount : 1;
+    const unit = parsed ? parsed.unit : '';
+
+    const multiplier = isWeightBased ? (currentInputVal / baseAmount) : currentInputVal;
+    const rawPoints = selectedFood.points * multiplier;
+    
+    // MAGIE: Immer exakt auf ,0 oder ,5 runden
+    const roundedPoints = Math.round(rawPoints * 2) / 2;
+
+    let cleanName = selectedFood.name;
+    let displayName = '';
+
+    if (isWeightBased) {
+      // Wenn es Grammangaben hat, schneiden wir die "100g" aus dem Namen, damit das Tagebuch hübsch bleibt
+      const regex = new RegExp(`\\s*,?\\s*${parsed.baseAmount}(?:[.,]0+)?\\s*${parsed.unit}\\b`, 'i');
+      cleanName = cleanName.replace(regex, '').trim();
+      // Falls Kommas am Ende übrig bleiben
+      cleanName = cleanName.replace(/,\s*$/g, '').trim();
+      displayName = `${currentInputVal}${unit} ${cleanName}`;
+    } else {
+      displayName = `${currentInputVal}x ${cleanName}`;
+    }
+
     try {
       const logEntry = {
-        foodId: food.id, name: food.name, category: food.category,
-        points: food.points * multiplier, multiplier: multiplier,
+        foodId: selectedFood.id,
+        name: displayName,
+        category: selectedFood.category,
+        points: roundedPoints,
+        multiplier: multiplier,
         consumedAt: new Date().toISOString()
       };
       await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'logs'), logEntry);
+      
       setSelectedFood(null);
+      setAmountInput('');
       setActiveTab('dashboard');
     } catch (e) { console.error("Error adding log", e); }
   };
@@ -697,7 +738,7 @@ export default function App() {
                 <li key={log.id} className="flex justify-between items-center bg-white dark:bg-[#1C1C1E] p-4 rounded-2xl shadow-sm group">
                   <div className="flex-1">
                     <p className="font-semibold text-[17px] text-gray-900 dark:text-white">{log.name}</p>
-                    <p className="text-[14px] text-gray-500">{log.multiplier}x Portion</p>
+                    <p className="text-[14px] text-gray-500">{log.multiplier < 10 ? `${log.multiplier}x Portion` : 'Mengenangabe'}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-bold text-blue-500 dark:text-teal-400">{log.points.toString().replace('.', ',')}</span>
@@ -731,7 +772,6 @@ export default function App() {
 
       <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1 pt-1 shrink-0">
         
-        {/* DER NEUE, PERFEKTE SORTIER-BUTTON */}
         <div className="relative flex items-center bg-white dark:bg-[#1C1C1E] rounded-full px-3 py-1.5 border border-gray-200 dark:border-gray-800 shrink-0 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2C2C2E] transition-colors">
           <ArrowUpDown size={14} className="text-gray-400 mr-2 shrink-0 pointer-events-none" />
           <span className="whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300 pointer-events-none">
@@ -776,7 +816,11 @@ export default function App() {
               
               return (
               <li key={food.id} className="p-4 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-[#2C2C2E] transition-colors cursor-pointer group">
-                <div className="flex-1 flex items-start gap-4" onClick={() => setSelectedFood(food)}>
+                <div className="flex-1 flex items-start gap-4" onClick={() => {
+                   setSelectedFood(food);
+                   const parsed = parseFoodQuantity(food.name);
+                   setAmountInput(parsed ? String(parsed.baseAmount) : '1');
+                }}>
                   <div className="mt-1 p-2 rounded-full bg-blue-50 dark:bg-teal-900/20 text-blue-500 dark:text-teal-400 shrink-0">
                     <Utensils size={18} />
                   </div>
@@ -802,7 +846,11 @@ export default function App() {
                       <Edit2 size={18} />
                     </button>
                   )}
-                  <div onClick={() => setSelectedFood(food)} className="flex items-center justify-center bg-gray-100 dark:bg-[#2C2C2E] text-gray-900 dark:text-gray-300 px-3 py-1.5 rounded-xl font-semibold min-w-[3.5rem]">
+                  <div onClick={() => {
+                     setSelectedFood(food);
+                     const parsed = parseFoodQuantity(food.name);
+                     setAmountInput(parsed ? String(parsed.baseAmount) : '1');
+                  }} className="flex items-center justify-center bg-gray-100 dark:bg-[#2C2C2E] text-gray-900 dark:text-gray-300 px-3 py-1.5 rounded-xl font-semibold min-w-[3.5rem]">
                     {(food.points || 0).toString().replace('.', ',')}
                   </div>
                 </div>
@@ -844,7 +892,9 @@ export default function App() {
               <ul className="space-y-2">
                 {day.logs.map(log => (
                   <li key={log.id} className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">{log.multiplier}x {log.name}</span>
+                    <span className="text-gray-600 dark:text-gray-400">
+                      {log.name} {/* Der Name ist durch die Logik jetzt schon perfekt formatiert (z.B. "35g Fladenbrot") */}
+                    </span>
                     <span className="text-gray-900 dark:text-gray-300 font-medium">{log.points}</span>
                   </li>
                 ))}
@@ -897,7 +947,7 @@ export default function App() {
       </button>
 
       <div className="text-center mt-8">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v6.2 (UI Fixes)</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v7.0 (Smart Portions)</p>
         <p className="text-xs text-gray-400 mt-1">
           Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'}
         </p>
@@ -1029,30 +1079,66 @@ export default function App() {
           </div>
         )}
 
-        {/* MODAL: Portion wählen */}
+        {/* MODAL: INTELLIGENTE PORTIONIERUNG (DYNAMISCH) */}
         {selectedFood && (
           <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity">
             <div className="w-full sm:w-11/12 max-w-sm bg-white dark:bg-[#1C1C1E] rounded-t-3xl sm:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full sm:fade-in duration-300">
               <div className="p-6 relative">
-                <button onClick={() => setSelectedFood(null)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-[#2C2C2E] rounded-full text-gray-500"><X size={20} /></button>
+                <button onClick={() => { setSelectedFood(null); setAmountInput(''); }} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-[#2C2C2E] rounded-full text-gray-500"><X size={20} /></button>
+                
                 <div className="mt-2 mb-6 text-center">
                   <h3 className="text-2xl font-bold text-gray-900 dark:text-white leading-tight">{selectedFood.name}</h3>
-                  <p className="text-gray-500 mt-1">{selectedFood.category} • {(selectedFood.points || 0).toString().replace('.', ',')} P.</p>
+                  <p className="text-gray-500 mt-1">{selectedFood.category} • {(selectedFood.points || 0).toString().replace('.', ',')} P. (Standard)</p>
                 </div>
-                <div className="space-y-4">
-                  <button onClick={() => handleAddLog(selectedFood, 0.5)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6 focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
-                    <span>Halbe Portion (0,5x)</span>
-                    <span className="text-blue-500 dark:text-teal-400">{((selectedFood.points || 0) * 0.5).toString().replace('.', ',')} P.</span>
-                  </button>
-                  <button onClick={() => handleAddLog(selectedFood, 1)} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30 rounded-2xl font-bold flex justify-between px-6">
-                    <span>Normale Portion (1x)</span>
-                    <span>{(selectedFood.points || 0).toString().replace('.', ',')} P.</span>
-                  </button>
-                  <button onClick={() => handleAddLog(selectedFood, 2)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6 focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
-                    <span>Doppelte Portion (2x)</span>
-                    <span className="text-blue-500 dark:text-teal-400">{((selectedFood.points || 0) * 2).toString().replace('.', ',')} P.</span>
-                  </button>
+                
+                <div className="bg-gray-50 dark:bg-[#2C2C2E] rounded-3xl p-6 mb-4 relative overflow-hidden border border-gray-100 dark:border-gray-800">
+                  <div className="flex flex-col items-center relative z-10">
+                     <div className="flex items-end justify-center gap-2 border-b-2 border-blue-500 dark:border-teal-500 pb-2 mb-4 w-2/3 transition-colors focus-within:border-blue-600">
+                       <input 
+                         type="number" 
+                         inputMode="decimal"
+                         value={amountInput}
+                         onChange={(e) => setAmountInput(e.target.value.replace(',', '.'))}
+                         className="bg-transparent text-5xl font-black text-center text-gray-900 dark:text-white outline-none w-full p-0 m-0"
+                         autoFocus
+                       />
+                       <span className="text-xl font-bold text-gray-400 dark:text-gray-500 mb-1.5 pb-0.5">
+                         {parseFoodQuantity(selectedFood.name)?.unit || 'x'}
+                       </span>
+                     </div>
+                     
+                     <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Punkte berechnet</div>
+                     <div className="text-4xl font-black text-blue-500 dark:text-teal-400">
+                        {(() => {
+                           const parsed = parseFoodQuantity(selectedFood.name);
+                           const val = parseFloat(amountInput) || 0;
+                           const mult = parsed ? (val / parsed.baseAmount) : val;
+                           const pts = Math.round(((selectedFood.points || 0) * mult) * 2) / 2;
+                           return pts.toString().replace('.', ',');
+                        })()}
+                     </div>
+                  </div>
                 </div>
+
+                <div className="flex gap-2 mb-6">
+                   {parseFoodQuantity(selectedFood.name) ? (
+                     <>
+                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 10))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 10</button>
+                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 50))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 50</button>
+                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 100))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 100</button>
+                     </>
+                   ) : (
+                     <>
+                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 0.5))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 0,5</button>
+                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 1))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 1,0</button>
+                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 2))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 2,0</button>
+                     </>
+                   )}
+                </div>
+
+                <button onClick={handleAddLogSubmit} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30 rounded-2xl font-bold active:scale-[0.98] transition-all text-[17px]">
+                  Jetzt eintragen
+                </button>
               </div>
             </div>
           </div>
