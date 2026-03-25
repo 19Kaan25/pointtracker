@@ -2,16 +2,19 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, Moon, Sun, Utensils, Edit2, Shield, X, Save, 
   Home, Clock, User, Plus, ChevronRight, PieChart, Trash2,
-  Calculator, Users, ArrowUpDown, LogOut, Lock, Database, CheckCircle2
+  Calculator, Users, ArrowUpDown, LogOut, Lock, Scan
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
-  getAuth, signInWithCustomToken, onAuthStateChanged, 
-  signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut 
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, signOut 
 } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, addDoc, writeBatch } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, addDoc } from 'firebase/firestore';
 
-// --- 1. FIREBASE SETUP ---
+// ============================================================================
+// 1. FIREBASE SETUP
+// TRAGE HIER DEINE ECHTEN FIREBASE DATEN EIN FÜR DEINE LOKALE TESTUMGEBUNG:
+// ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyDYJNiJtKccTPlnyykZwWMrOgza0qjW4ZY",
   authDomain: "pointtracker-aa3ef.firebaseapp.com",
@@ -20,337 +23,14 @@ const firebaseConfig = {
   messagingSenderId: "412618494533",
   appId: "1:412618494533:web:cad5143f3c16b761c7c92c"
 };
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'pointtracker-app';
+const appId = "pointtracker-app";
+// ============================================================================
 
-// --- 2. DIE KOMPLETTEN PDF-DATEN FÜR DEN IMPORT ---
-const fullPDFData = [
-  // Brot & Brötchen
-  { n: "Brot, jede Sorte, 1 Scheibe", c: "Brot & Brötchen", p: 2 },
-  { n: "Baguette-Brötchen, 1 Stück", c: "Brot & Brötchen", p: 4 },
-  { n: "Brötchen, jede Sorte", c: "Brot & Brötchen", p: 2 },
-  { n: "Croissant, 1 Stück", c: "Brot & Brötchen", p: 8.5 },
-  { n: "Fladenbrot, 1 Ecke, 50g", c: "Brot & Brötchen", p: 2 },
-  { n: "Knäckebrot, 1 Scheibe", c: "Brot & Brötchen", p: 0.5 },
-  { n: "Schwarzbrot", c: "Brot & Brötchen", p: 1.5 },
-  { n: "Toastbrot, 1 Scheibe, 20g", c: "Brot & Brötchen", p: 1 },
-  { n: "Zopf, 1 Scheibe, 50g", c: "Brot & Brötchen", p: 3.5 },
-  { n: "Zwieback, 1 Scheibe", c: "Brot & Brötchen", p: 0.5 },
-  // Brotaufstriche
-  { n: "Erdnusscreme, 1 TL, 5g", c: "Brotaufstriche", p: 1 },
-  { n: "Marmelade/Konfitüre 1 TL, 5g", c: "Brotaufstriche", p: 0 },
-  { n: "Marmelade/Konfitüre 2 TL, 10g", c: "Brotaufstriche", p: 0.5 },
-  { n: "Honig, 1 TL, 5g", c: "Brotaufstriche", p: 0 },
-  { n: "Honig, 2 TL, 10g", c: "Brotaufstriche", p: 0.5 },
-  { n: "Nuss-Nougatcreme 1 TL, 5g", c: "Brotaufstriche", p: 0.5 },
-  { n: "Pflaumenmus, 3 TL", c: "Brotaufstriche", p: 0.5 },
-  { n: "Zuckerrübensirup 2 TL, 10g", c: "Brotaufstriche", p: 0.5 },
-  // Dessert & Süßspeisen
-  { n: "Apfelkompott / Apfelmus mit Zucker, 2 TL", c: "Dessert & Süßspeisen", p: 0.5 },
-  { n: "Crêpes, 1 Stück, 70g", c: "Dessert & Süßspeisen", p: 4 },
-  { n: "Dampfnudel, 1 kleine, 50g", c: "Dessert & Süßspeisen", p: 3.5 },
-  { n: "Fruchtcocktail, 1 EL, 20g", c: "Dessert & Süßspeisen", p: 0.5 },
-  { n: "Fruchtcreme, 1 kl. Schale, 150g", c: "Dessert & Süßspeisen", p: 7 },
-  { n: "Fruchtsalat, mit Zucker, 2 EL", c: "Dessert & Süßspeisen", p: 0.5 },
-  { n: "Götterspeise mit Zucker, 100g", c: "Dessert & Süßspeisen", p: 5 },
-  { n: "Grießbrei, 150g", c: "Dessert & Süßspeisen", p: 4 },
-  { n: "Milchreis, 125g", c: "Dessert & Süßspeisen", p: 2 },
-  { n: "Mokka-/Schokoladensauce, 1 EL", c: "Dessert & Süßspeisen", p: 0.5 },
-  { n: "Mousse au Chocolat, 125g", c: "Dessert & Süßspeisen", p: 10.5 },
-  { n: "Tiramisu, 150g", c: "Dessert & Süßspeisen", p: 8 },
-  { n: "Vanille-/Schokoladenpudding, 125g", c: "Dessert & Süßspeisen", p: 3 },
-  { n: "Vanillesauce, 1 EL", c: "Dessert & Süßspeisen", p: 0.5 },
-  { n: "Weincreme, 125g", c: "Dessert & Süßspeisen", p: 7 },
-  // Eis
-  { n: "Eisbecher mit Sahne & Früchte, 170g", c: "Eis", p: 8.5 },
-  { n: "Eiscreme, 1 Kugel, 50g", c: "Eis", p: 2.5 },
-  { n: "Eiskaffee, 1 Glas, 200ml", c: "Eis", p: 5.5 },
-  { n: "Fruchteis-/Milcheis, 1 Kugel, 50g", c: "Eis", p: 1.5 },
-  { n: "Softeis mit Waffel, 1 Stück", c: "Eis", p: 3 },
-  { n: "Sorbet, 1 Glas, 200ml", c: "Eis", p: 4 },
-  { n: "Wassereis am Stiel, 1 Stück", c: "Eis", p: 1 },
-  { n: "Eiscreme am Stiel mit Schoko, 1 Stück", c: "Eis", p: 8 },
-  // Fette & Öle
-  { n: "Butter, 1 TL, 5g", c: "Fette & Öle", p: 1 },
-  { n: "Butter, halbfett, 1TL", c: "Fette & Öle", p: 0.5 },
-  { n: "Mayonnaise, 20% Fett, 2 TL", c: "Fette & Öle", p: 0.5 },
-  { n: "Mayonnaise, 50% Fett, 1 TL", c: "Fette & Öle", p: 0.5 },
-  { n: "Mayonnaise, 80% Fett, 1 TL", c: "Fette & Öle", p: 1 },
-  { n: "Pflanzencreme, 1 TL, 5g", c: "Fette & Öle", p: 1 },
-  { n: "Pflanzenmargarine, fettreduziert, 2 TL", c: "Fette & Öle", p: 1.5 },
-  { n: "Pflanzenmargarine, halbfett, 1 TL", c: "Fette & Öle", p: 0.5 },
-  { n: "Pflanzenöl, 1 TL, 5g", c: "Fette & Öle", p: 1 },
-  { n: "Remoulade, bis 65% Fett, 1 TL", c: "Fette & Öle", p: 1 },
-  { n: "Schweineschmalz, 1 TL, 5g", c: "Fette & Öle", p: 1.5 },
-  // Fisch
-  { n: "Aal, frisch, 100g roh", c: "Fisch", p: 7.5 },
-  { n: "Aal, geräuchert, 40g", c: "Fisch", p: 3.5 },
-  { n: "Austern, 3 Stück, 50g", c: "Fisch", p: 0.5 },
-  { n: "Bismarckhering, 1 Stück, 110g", c: "Fisch", p: 6 },
-  { n: "Brathering, 1 kleiner, 100g", c: "Fisch", p: 5 },
-  { n: "Bückling, geräuchert, 110g", c: "Fisch", p: 6 },
-  { n: "Egli, 10 Filets, 150g", c: "Fisch", p: 2 },
-  { n: "Fisch, fettarm (Schellfisch/Seelachs), 150g", c: "Fisch", p: 2 },
-  { n: "Fischfilet, paniert, 150g", c: "Fisch", p: 7 },
-  { n: "Fischstäbchen, 1 Stück, 30g", c: "Fisch", p: 1 },
-  { n: "Forelle, geräuchert, 60g", c: "Fisch", p: 1.5 },
-  { n: "Forelle, frisch, 300g", c: "Fisch", p: 6 },
-  { n: "Forelle, TK, 200g", c: "Fisch", p: 4 },
-  { n: "Garnelen, 5 Stück, 30g", c: "Fisch", p: 0.5 },
-  { n: "Heilbutt, schwarz, geräuchert, 100g", c: "Fisch", p: 5.5 },
-  { n: "Heilbutt, schwarz, frisch, 125g", c: "Fisch", p: 4.5 },
-  { n: "Heilbutt, weiß, frisch, 125g", c: "Fisch", p: 2 },
-  { n: "Hering in Gelee, 150g", c: "Fisch", p: 6 },
-  { n: "Hering, frisch, 90g", c: "Fisch", p: 5 },
-  { n: "Heringsfilet in Sahnesauce, 60g", c: "Fisch", p: 4 },
-  { n: "Heringsfilet in Tomatensauce, 95g", c: "Fisch", p: 4.5 },
-  { n: "Hummer, 125g", c: "Fisch", p: 2 },
-  { n: "Kabeljau / Dorsch, frisch, 150g", c: "Fisch", p: 2 },
-  { n: "Karpfen, frisch, 100g", c: "Fisch", p: 2.5 },
-  { n: "Katfisch/Steinbeißer, 125g", c: "Fisch", p: 2 },
-  { n: "Kaviar, echt, 2 TL", c: "Fisch", p: 0.5 },
-  { n: "Kaviar, Ersatz, 4 TL", c: "Fisch", p: 0.5 },
-  { n: "Krabben, 1 EL, 25g", c: "Fisch", p: 0.5 },
-  { n: "Lachs, geräuchert, 60g", c: "Fisch", p: 2 },
-  { n: "Lachs, 1 kl. Steak, 125g", c: "Fisch", p: 3.5 },
-  { n: "Makrele in Öl, 1 EL", c: "Fisch", p: 2 },
-  { n: "Makrele, geräuchert, 75g", c: "Fisch", p: 3.5 },
-  { n: "Makrele, frisch, 90g", c: "Fisch", p: 4 },
-  { n: "Matjeshering, 1 Stück, 80g", c: "Fisch", p: 5 },
-  { n: "Muscheln, 500g", c: "Fisch", p: 5 },
-  { n: "Ölsardinen, 1 EL, 30g", c: "Fisch", p: 1.5 },
-  { n: "Rollmops, 1 Stück, 80g", c: "Fisch", p: 2.5 },
-  { n: "Rotbarsch, frisch, 150g", c: "Fisch", p: 3 },
-  { n: "Rotbarsch, geräuchert, 100g", c: "Fisch", p: 3 },
-  { n: "Sardellen in Salzlake, 5 Stück", c: "Fisch", p: 0.5 },
-  { n: "Sardine, 1 Stück, 60g", c: "Fisch", p: 2 },
-  { n: "Schellfisch, geräuchert, 75g", c: "Fisch", p: 1 },
-  { n: "Schellfisch, frisch, 150g", c: "Fisch", p: 2 },
-  { n: "Schillerlocke 1/2 kleine, 60g", c: "Fisch", p: 4.5 },
-  { n: "Scholle, 1 Filet, 70g", c: "Fisch", p: 1 },
-  { n: "Seehecht/Hechtdorsch, 125g", c: "Fisch", p: 2 },
-  { n: "Seelachs in Öl, 1 Scheibe, 25g", c: "Fisch", p: 3 },
-  { n: "Seezunge, 1 Filet, 70g", c: "Fisch", p: 1 },
-  { n: "Sprotte, geräuchert, 15g", c: "Fisch", p: 1 },
-  { n: "Tunfisch, frisch, 100g", c: "Fisch", p: 5.5 },
-  { n: "Tunfisch im eigenen Saft, 1 EL", c: "Fisch", p: 1 },
-  { n: "Tintenfisch, 125g roh", c: "Fisch", p: 0.5 },
-  // Fleisch & Wurst
-  { n: "Bauchspeck, 1 kl. Stück, 10g", c: "Fleisch & Wurst", p: 1 },
-  { n: "Bierschinken, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1 },
-  { n: "Bierwurst, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Blutwurst, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Cervelat-Wurst, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 2 },
-  { n: "Corned Beef, 1 Scheibe, 25g", c: "Fleisch & Wurst", p: 0.5 },
-  { n: "Fleischkäse/Leberkäse, 100g", c: "Fleisch & Wurst", p: 8 },
-  { n: "Fleischwurst, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Frankfurter Rindswurst, 100g", c: "Fleisch & Wurst", p: 6 },
-  { n: "Frikadelle, 1 kl. 100g", c: "Fleisch & Wurst", p: 6 },
-  { n: "Früchstücksspeck, 1 Scheibe, 25g", c: "Fleisch & Wurst", p: 4.5 },
-  { n: "Hackfleisch, gemischt, 1 EL", c: "Fleisch & Wurst", p: 2 },
-  { n: "Jagdwurst, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1 },
-  { n: "Kalbfleisch, mager, 125g", c: "Fleisch & Wurst", p: 2 },
-  { n: "Kalbsbratwurst, 1 Stück, 150g", c: "Fleisch & Wurst", p: 11 },
-  { n: "Kalbsleberwurst, 1 EL, 15g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Kammscheibe vom Schwein, 150g", c: "Fleisch & Wurst", p: 7 },
-  { n: "Kassler, 1 kl. Stück, 125g", c: "Fleisch & Wurst", p: 4 },
-  { n: "Kassleraufschnitt, 1 Scheibe, 15g", c: "Fleisch & Wurst", p: 0.5 },
-  { n: "Knackwurst, 1 Stück, 100g", c: "Fleisch & Wurst", p: 8 },
-  { n: "Lachsschinken, 2 Scheiben, 20g", c: "Fleisch & Wurst", p: 0.5 },
-  { n: "Lammkotelett, 1 kl., 80g", c: "Fleisch & Wurst", p: 4 },
-  { n: "Landjäger, 1 Stück, 90g", c: "Fleisch & Wurst", p: 11.5 },
-  { n: "Leber, 100g", c: "Fleisch & Wurst", p: 2.5 },
-  { n: "Leberknödel, 1 Stück, 100g", c: "Fleisch & Wurst", p: 4.5 },
-  { n: "Leberwurst, 1 EL, 15g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Lyoner, 1 Stück, 125g", c: "Fleisch & Wurst", p: 10 },
-  { n: "Lyoner Wurst, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Mettenden, 1 Stück, 75g", c: "Fleisch & Wurst", p: 8 },
-  { n: "Mettwurst, 1 EL, 15g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Mortadella, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Pferdefleisch, mager, 125g", c: "Fleisch & Wurst", p: 2.5 },
-  { n: "Presskopf, 1 Scheibe, 30g", c: "Fleisch & Wurst", p: 2 },
-  { n: "Rinderhackfleisch, 1 EL, 30g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Rinderroulade, 1 kl., 160g", c: "Fleisch & Wurst", p: 4 },
-  { n: "Rindersteak, 140g", c: "Fleisch & Wurst", p: 4.5 },
-  { n: "Rindfleisch, geräuchert, 50g", c: "Fleisch & Wurst", p: 1 },
-  { n: "Roastbeef, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 0.5 },
-  { n: "Rostbratwurst, 1 Stück, 100g", c: "Fleisch & Wurst", p: 10 },
-  { n: "Salami, 1 dünne Scheibe, 20g", c: "Fleisch & Wurst", p: 2 },
-  { n: "Schinken, gekocht, ohne Fett, 20g", c: "Fleisch & Wurst", p: 0.5 },
-  { n: "Schinkenwurst, 1 Scheibe, 20g", c: "Fleisch & Wurst", p: 1.5 },
-  { n: "Schweinesülze, 25g", c: "Fleisch & Wurst", p: 1 },
-  { n: "Schweinebratenaufschnitt, 15 g", c: "Fleisch & Wurst", p: 0.5 },
-  { n: "Schweinefleisch, mager, 150g", c: "Fleisch & Wurst", p: 3 },
-  { n: "Schweinehackfleisch, 1 EL, 30g", c: "Fleisch & Wurst", p: 2 },
-  { n: "Schweinekotelett, 1 Stück, 150g", c: "Fleisch & Wurst", p: 4 },
-  { n: "Schweinekotelett paniert, 150g", c: "Fleisch & Wurst", p: 7.5 },
-  { n: "Schweineschnitzel, 150g", c: "Fleisch & Wurst", p: 3 },
-  { n: "Schweinsbratwurst, 1 Stück, 150g", c: "Fleisch & Wurst", p: 12.5 },
-  { n: "Teewurst, 1 EL, 15g", c: "Fleisch & Wurst", p: 2 },
-  { n: "Weißwurst, 1 Stück, 60g", c: "Fleisch & Wurst", p: 4.5 },
-  { n: "Wiener Würstchen, 1 Stück, 70g", c: "Fleisch & Wurst", p: 6 },
-  { n: "Wild, mager, 125g", c: "Fleisch & Wurst", p: 3 },
-  { n: "Zungenwurst, 1 Scheibe, 30g", c: "Fleisch & Wurst", p: 2 },
-  // Geflügel
-  { n: "Brathähnchen, mit Haut, 1/2, 370g", c: "Geflügel", p: 12.5 },
-  { n: "Brathähnchen, ohne Haut, 1/2, 280g", c: "Geflügel", p: 5 },
-  { n: "Ente, mit Haut, 150g", c: "Geflügel", p: 8.5 },
-  { n: "Entenbrust, ohne Haut, 150g", c: "Geflügel", p: 5.5 },
-  { n: "Gans, mit Haut, 150g", c: "Geflügel", p: 10.5 },
-  { n: "Gans, ohne Haut, 150g", c: "Geflügel", p: 5 },
-  { n: "Gänsekeule, 300g", c: "Geflügel", p: 11 },
-  { n: "Geflügelbrustaufschnitt, geräuchert, 20g", c: "Geflügel", p: 0.5 },
-  { n: "Geflügelfrikadelle, 100g", c: "Geflügel", p: 6 },
-  { n: "Geflügelleber, 100g", c: "Geflügel", p: 2.5 },
-  { n: "Geflügelleberwurst, 1 EL, 15g", c: "Geflügel", p: 1 },
-  { n: "Geflügelmortadella, 1 Scheibe, 20g", c: "Geflügel", p: 1 },
-  { n: "Geflügelsalami, 1 Scheibe, 20g", c: "Geflügel", p: 1.5 },
-  { n: "Geflügelschnitzel/-filet, 120g", c: "Geflügel", p: 2 },
-  { n: "Geflügelwurstaufschnitt, 1 Scheibe, 20g", c: "Geflügel", p: 1 },
-  { n: "Hähnchenkeule mit Haut, 1 Schenkel", c: "Geflügel", p: 5.5 },
-  { n: "Hähnchenkeule ohne Haut, 1 Schenkel", c: "Geflügel", p: 2.5 },
-  { n: "Putenschnitzel, paniert, 150g", c: "Geflügel", p: 4.5 },
-  { n: "Straußenfleisch, 120g", c: "Geflügel", p: 2 },
-  { n: "Suppenhuhn, 1 kl. Portion, 150g", c: "Geflügel", p: 6.5 },
-  // Gemüse & Hülsenfrüchte
-  { n: "Artischocken, Auberginen, Blattsalat", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Sellerie, Blumenkohl, Bohnen, Broccoli", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Chinakohl, Fenchel, Gemüsesaft, Grünkohl", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Gurken eingelegt, Knoblauch, Kohlrabi", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Kürbis, Möhren, Paprikaschoten, Pilze", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Porree, Radieschen, Rhabarber, Rosenkohl", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Rotkohl, Rote Bete, Rüben, Sauerkraut", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Schwarzwurzeln, Spargel, Spinat, Tomaten", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Weißkohl, Wirsing, Zucchini, Zwiebel", c: "Gemüse & Hülsenfrüchte", p: 0 },
-  { n: "Zuckererbsen, 1 Hand voll, 50g", c: "Gemüse & Hülsenfrüchte", p: 0.5 },
-  { n: "Oliven, 5 Stück", c: "Gemüse & Hülsenfrüchte", p: 0.5 },
-  { n: "Mais, Konserve, 2 EL, 50g", c: "Gemüse & Hülsenfrüchte", p: 0.5 },
-  { n: "Hülsenfrüchte (Linsen, Erbsen, Bohnen), 1 EL", c: "Gemüse & Hülsenfrüchte", p: 0.5 },
-  // Getränke, alkoholfrei
-  { n: "Alkoholfreies Bier, 200ml", c: "Getränke, alkoholfrei", p: 1 },
-  { n: "Apfelsaftschorle, 200ml", c: "Getränke, alkoholfrei", p: 0.5 },
-  { n: "Bitter Lemon, 200ml", c: "Getränke, alkoholfrei", p: 1 },
-  { n: "Cappuccino mit Milch, 1 Tasse, 150ml", c: "Getränke, alkoholfrei", p: 1 },
-  { n: "Cola, 200ml", c: "Getränke, alkoholfrei", p: 2 },
-  { n: "Cola light", c: "Getränke, alkoholfrei", p: 0 },
-  { n: "Diät-Multivitaminsaft, 200ml", c: "Getränke, alkoholfrei", p: 0.5 },
-  { n: "Eistee, 200ml", c: "Getränke, alkoholfrei", p: 1 },
-  { n: "Energie-Drinks, 200ml", c: "Getränke, alkoholfrei", p: 1.5 },
-  { n: "Früchtetee / Kräutertee / Kaffee", c: "Getränke, alkoholfrei", p: 0 },
-  { n: "Fruchtsaft, 200ml", c: "Getränke, alkoholfrei", p: 1 },
-  { n: "Ginger Ale, 200ml", c: "Getränke, alkoholfrei", p: 1 },
-  { n: "Light Getränke, Wasser, Mineralwasser", c: "Getränke, alkoholfrei", p: 0 },
-  { n: "Kakao, Schokolade, 200ml", c: "Getränke, alkoholfrei", p: 5 },
-  { n: "Tea & Fruit, mit Zucker, 200ml", c: "Getränke, alkoholfrei", p: 1 },
-  // Getränke, alkoholisch
-  { n: "Apfelwein, 200ml", c: "Getränke, alkoholisch", p: 1.5 },
-  { n: "Berliner Weiße mit Schluck, 250ml", c: "Getränke, alkoholisch", p: 2 },
-  { n: "Radler, Alster, 200ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Bier, jede Sorte (außer Starkbier), 330ml", c: "Getränke, alkoholisch", p: 2.5 },
-  { n: "Bockbier, 200ml", c: "Getränke, alkoholisch", p: 2 },
-  { n: "Bowle, Punsch, 200ml", c: "Getränke, alkoholisch", p: 3.5 },
-  { n: "Campari, 100ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Cognac / Rum / Schnaps / Whisky, 20ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Dessertwein, 50ml", c: "Getränke, alkoholisch", p: 1.5 },
-  { n: "Glühwein, 200ml", c: "Getränke, alkoholisch", p: 3.5 },
-  { n: "Likör, jede Sorte, 20ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Malzbier, 200ml", c: "Getränke, alkoholisch", p: 2 },
-  { n: "Sekt, Champagner, jede Sorte, 100ml", c: "Getränke, alkoholisch", p: 1.5 },
-  { n: "Sherry, 50ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Wein, schwere & süße, 100ml", c: "Getränke, alkoholisch", p: 1.5 },
-  { n: "Wein, trocken, 100ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Weinbrand, 20ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Weinschorle, 200ml", c: "Getränke, alkoholisch", p: 1 },
-  { n: "Weizenbier, 500ml", c: "Getränke, alkoholisch", p: 4 },
-  { n: "Wermut, süß, 50ml", c: "Getränke, alkoholisch", p: 1.5 },
-  { n: "Wermut, trocken, 50ml", c: "Getränke, alkoholisch", p: 1 },
-  // Getreide & Getreideprodukte
-  { n: "Cornflakes, 1 Tasse, 20g", c: "Getreide & Getreideprodukte", p: 1 },
-  { n: "Popcorn, Puffreis, 40g", c: "Getreide & Getreideprodukte", p: 2 },
-  { n: "Getreidekörner, 1 Tasse, 100g", c: "Getreide & Getreideprodukte", p: 1 },
-  { n: "Grieß, trocken, 1 EL, 20g", c: "Getreide & Getreideprodukte", p: 0.5 },
-  { n: "Hafer- / Getreideflocken, 1 EL, 10g", c: "Getreide & Getreideprodukte", p: 0.5 },
-  { n: "Hirse trocken, 1 EL, 20g", c: "Getreide & Getreideprodukte", p: 1 },
-  { n: "Knuspermüsli, gesüßt, geröstet, 1 EL", c: "Getreide & Getreideprodukte", p: 1 },
-  { n: "Mais, trocken (Popcorn), 1 EL", c: "Getreide & Getreideprodukte", p: 0.5 },
-  { n: "Mehl, jede Sorte, 1 TL, 10g", c: "Getreide & Getreideprodukte", p: 0.5 },
-  { n: "Milchreis, trocken, 1 EL, 20g", c: "Getreide & Getreideprodukte", p: 1 },
-  { n: "Müsliriegel, 1 kl., 25g", c: "Getreide & Getreideprodukte", p: 2 },
-  { n: "Paniermehl, 1 EL, 10g", c: "Getreide & Getreideprodukte", p: 0.5 },
-  { n: "Reis, jede Sorte, 1 EL, 20g", c: "Getreide & Getreideprodukte", p: 1 },
-  { n: "Reiswaffel, 1 St., 8g", c: "Getreide & Getreideprodukte", p: 0.5 },
-  { n: "Schokomüsli, 1 EL, 10g", c: "Getreide & Getreideprodukte", p: 1 },
-  { n: "Stärkemehl, 1 EL, 10g", c: "Getreide & Getreideprodukte", p: 0.5 },
-  // Kartoffel & Klöße
-  { n: "Bratkartoffeln, 1 Port., 200g", c: "Kartoffel & Klöße", p: 7 },
-  { n: "Kartoffelklöße, Fertigprodukt, 1 St., 90g", c: "Kartoffel & Klöße", p: 1.5 },
-  { n: "Kartoffelklöße, Pulver, 1 EL, 10g", c: "Kartoffel & Klöße", p: 0.5 },
-  { n: "Kartoffelklöße, selbsthergestellt, 1 St., 100g", c: "Kartoffel & Klöße", p: 2 },
-  { n: "Kartoffelkroketten, verzehrfertig, 1 St., 30g", c: "Kartoffel & Klöße", p: 1 },
-  { n: "Kartoffeln, (Sattmacherportion)", c: "Kartoffel & Klöße", p: 2 },
-  { n: "Kartoffelpüree, Fertigprodukt, Pulver, 1 EL", c: "Kartoffel & Klöße", p: 1 },
-  { n: "Ofen-Pommes Frites, 150g", c: "Kartoffel & Klöße", p: 6.5 },
-  { n: "Reibekuchen, verzehrfertig, 1 St., 60g", c: "Kartoffel & Klöße", p: 4.5 },
-  { n: "Rösti, 1 St., 60g", c: "Kartoffel & Klöße", p: 2 },
-  { n: "Semmelknödel, 1 St., 100g", c: "Kartoffel & Klöße", p: 3.5 },
-  { n: "Süßkartoffel, 1 St., 50g", c: "Kartoffel & Klöße", p: 1 },
-  // Käse
-  { n: "Camembert/Brie, 45% Fett, 1 kl. Ecke, 30g", c: "Käse", p: 1.5 },
-  { n: "Camembert, 60% Fett", c: "Käse", p: 3 },
-  { n: "Edelpilzkäse, 45% Fett, 1 kl. Ecke", c: "Käse", p: 2 },
-  { n: "Edelpilzkäse, 65% Fett, 1 kl. Ecke", c: "Käse", p: 4 },
-  { n: "Frischkäse, Natur/Kräuter, 30% Fett, 1 EL", c: "Käse", p: 0.5 },
-  { n: "Gorgonzola, 1 kl. Ecke, 30g", c: "Käse", p: 3 },
-  { n: "Hartkäse (z.B. Emmentaler), 45%, 30g", c: "Käse", p: 2.5 },
-  { n: "Käse, gerieben (Parmesan), 30-32%, 1 EL", c: "Käse", p: 0.5 },
-  { n: "Kochkäse, 10% Fett, 2 TL", c: "Käse", p: 0.5 },
-  { n: "Mozzarella, 1/2 Kugel, 50g", c: "Käse", p: 3 },
-  { n: "Raclette-Käse, 60% Fett, 1 Scheibe, 30g", c: "Käse", p: 3 },
-  { n: "Roquefort, 1 kl. Ecke, 30g", c: "Käse", p: 3 },
-  { n: "Sauermilchkäse (z.B. Harzer), 1 kl. Rolle", c: "Käse", p: 2 },
-  { n: "Schafkäse / Feta, 45% Fett, 1 EL, 15g", c: "Käse", p: 1 },
-  { n: "Schmelzkäse, 30% Fett, 2 EL, 25g", c: "Käse", p: 1.5 },
-  { n: "Schmelzkäse, 45% Fett, 2 EL, 25g", c: "Käse", p: 2 },
-  { n: "Schmelzkäsescheiben, 20-25% Fett, 1 Scheibe", c: "Käse", p: 1 },
-  { n: "Schnittkäse, 30% Fett, 1 Scheibe, 30g", c: "Käse", p: 2 },
-  { n: "Schnittkäse, 45-48% Fett, 1 Scheibe, 30g", c: "Käse", p: 2.5 },
-  { n: "Ziegenkäse, 45% Fett, 1 Scheibe, 30g", c: "Käse", p: 2 },
-  // Knabbereien
-  { n: "Brotchips, jede Sorte, 1 St., 5g", c: "Knabbereien", p: 0.5 },
-  { n: "Chipsletten, 5 St., 8g", c: "Knabbereien", p: 1 },
-  { n: "Erdnüsse, geröstet, 1TL, 5g", c: "Knabbereien", p: 1 },
-  { n: "Erdnussflips, 1 Hand voll, 6g", c: "Knabbereien", p: 1 },
-  { n: "Gebäckknusperstangen mit Käse, 1 St.", c: "Knabbereien", p: 1 },
-  { n: "Grissini, Brotsticks, 1 St.", c: "Knabbereien", p: 0.5 },
-  { n: "Kartoffelchips, 1 Hand voll, 15g", c: "Knabbereien", p: 2 },
-  { n: "Knabbergebäck z.B. Party-Mix, 1 Hand voll", c: "Knabbereien", p: 0.5 },
-  { n: "Kräcker, 5 St., 30g", c: "Knabbereien", p: 2 },
-  { n: "Mandeln gebrannt, 1 kl. Portion, 50g", c: "Knabbereien", p: 6.5 },
-  { n: "Popcorn, süß, fertig, 1 Hand voll, 5g", c: "Knabbereien", p: 0.5 },
-  { n: "Salzbrezeln, 5 St., 10g", c: "Knabbereien", p: 0.5 },
-  { n: "Salzstangen, 10 St., 10g", c: "Knabbereien", p: 0.5 },
-  { n: "Studentenfutter, 1 EL, 12g", c: "Knabbereien", p: 1.5 },
-  { n: "Vollkorn Dinkel Sesambrezeln, 5 St., 12g", c: "Knabbereien", p: 1 },
-  { n: "Vollkorngebäckstangen, 3 St., 15g", c: "Knabbereien", p: 1 },
-  // Nüsse & Samen
-  { n: "Cashewnüsse, 5 St., 5g", c: "Nüsse & Samen", p: 1 },
-  { n: "Erdnüsse, 1 EL, 10g", c: "Nüsse & Samen", p: 1.5 },
-  { n: "Haselnüsse, 4 St., 5g", c: "Nüsse & Samen", p: 1 },
-  { n: "Kokosnuss, frisch, 1 St., 50g", c: "Nüsse & Samen", p: 5 },
-  { n: "Kürbiskerne, 1 EL, 10g", c: "Nüsse & Samen", p: 1.5 },
-  { n: "Leinsamen, 1 TL, 5g", c: "Nüsse & Samen", p: 0.5 },
-  { n: "Mandeln, 4 St., 5g", c: "Nüsse & Samen", p: 1 },
-  { n: "Nüsse, gemahlen/gehackt, 1 TL, 5g", c: "Nüsse & Samen", p: 1 },
-  { n: "Paranüsse, 1 St., 5g", c: "Nüsse & Samen", p: 1 },
-  { n: "Pistazien, 7 St., 7g", c: "Nüsse & Samen", p: 1 },
-  { n: "Sesam, 1 TL, 5g", c: "Nüsse & Samen", p: 0.5 },
-  { n: "Sonnenblumenkerne, 1 TL, 5g", c: "Nüsse & Samen", p: 0.5 },
-  { n: "Walnüsse, 1 St., 5g", c: "Nüsse & Samen", p: 1 }
-];
-
-// --- 3. HELPER FUNKTIONEN ---
+// --- 2. HELPER FUNKTIONEN ---
 const getLogicalDayInfo = (dateString = null) => {
   const d = dateString ? new Date(dateString) : new Date();
   if (d.getHours() < 3) d.setDate(d.getDate() - 1);
@@ -367,7 +47,7 @@ const formatDate = (dateString) => {
   return new Date(dateString).toLocaleDateString('de-DE', options);
 };
 
-// TRICK: Wandelt JEDEN Benutzernamen in eine Firebase-kompatible Fake-Email um.
+// Wandelt Benutzernamen in Fake-Email um
 const usernameToFakeEmail = (uname) => {
   const lower = uname.trim().toLowerCase();
   let hex = '';
@@ -381,11 +61,12 @@ export default function App() {
   // --- STATES ---
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [initError, setInitError] = useState(null);
   const [userProfile, setUserProfile] = useState(null); 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isDarkMode, setIsDarkMode] = useState(false);
   
-  // Login Form States 
+  // Login Form States
   const [usernameInput, setUsernameInput] = useState('');
   const [password, setPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
@@ -405,26 +86,36 @@ export default function App() {
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
   const [dailyGoal, setDailyGoal] = useState(30);
 
+  // Scanner States
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState(null); // null | 'loading' | 'not_found' | 'error'
+  const scannerRef = useRef(null);
+
   const [showGoalCalculator, setShowGoalCalculator] = useState(false);
   const [goalData, setGoalData] = useState({ gender: '', age: '', weight: '', height: '', activity: '' });
 
   const [allProfiles, setAllProfiles] = useState([]);
   const [pendingUserChanges, setPendingUserChanges] = useState({});
-  const [importStatus, setImportStatus] = useState(null); // 'loading', 'success', null
 
   const isAdmin = userProfile?.role === 'admin';
 
   // --- FIREBASE INITIALIZATION & AUTH ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setAuthLoading(false);
-    });
+    try {
+      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+        setAuthLoading(false);
+      });
 
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      setIsDarkMode(true);
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        setIsDarkMode(true);
+      }
+      return () => unsubscribe();
+    } catch (err) {
+      console.error("Firebase Start-Fehler:", err);
+      setInitError(err.message);
+      setAuthLoading(false);
     }
-    return () => unsubscribe();
   }, []);
 
   // --- DATA FETCHING ---
@@ -482,6 +173,99 @@ export default function App() {
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
+  // --- BARCODE SCANNER LOGIK ---
+  const handleBarcodeScanned = async (barcode) => {
+    setScanStatus('loading');
+    try {
+      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+      const data = await res.json();
+      
+      if (data.status === 1) {
+        const p = data.product;
+        const name = p.product_name || 'Unbekanntes Produkt';
+        const brand = p.brands ? ` (${p.brands.split(',')[0]})` : '';
+        const kcal = p.nutriments?.['energy-kcal_100g'] || 0;
+        const fat = p.nutriments?.fat_100g || 0;
+        
+        // Automatische Punkteberechnung nach Formel
+        const points = Math.round(((kcal / 60) + (fat / 9)) * 2) / 2;
+
+        setIsScanning(false);
+        setScanStatus(null);
+        
+        setEditingFood({
+          id: '',
+          name: `${name}${brand} (100g)`,
+          category: '', 
+          kcal: kcal,
+          fett: fat,
+          points: points,
+          isCustom: true
+        });
+        setShowNewCategoryInput(false);
+      } else {
+        setScanStatus('not_found');
+      }
+    } catch(e) {
+      setScanStatus('not_found');
+    }
+  };
+
+  useEffect(() => {
+    if (isScanning && !scanStatus) {
+      const startCamera = async () => {
+        const Html5Qrcode = window.Html5Qrcode;
+        if (!Html5Qrcode) return;
+
+        // NEU: Verhindert den Absturz (weißen Bildschirm) auf HTTP-Verbindungen
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          console.error("Kamera API blockiert. HTTPS wird benötigt.");
+          setScanStatus('https_required');
+          return;
+        }
+
+        scannerRef.current = new Html5Qrcode("reader");
+        try {
+          await scannerRef.current.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            async (decodedText) => {
+              if(scannerRef.current && scannerRef.current.isScanning) {
+                await scannerRef.current.stop();
+                scannerRef.current.clear();
+              }
+              handleBarcodeScanned(decodedText);
+            },
+            (errorMessage) => { /* Ignorieren bei Nicht-Erkennung */ }
+          );
+        } catch (err) {
+          console.error("Camera start failed", err);
+          setScanStatus('error');
+        }
+      };
+
+      if (!window.Html5Qrcode) {
+        const script = document.createElement('script');
+        script.src = "https://unpkg.com/html5-qrcode";
+        script.onload = startCamera;
+        document.body.appendChild(script);
+      } else {
+        startCamera();
+      }
+    }
+
+    return () => {
+      if (scannerRef.current && scannerRef.current.isScanning) {
+        scannerRef.current.stop().then(() => scannerRef.current.clear()).catch(console.error);
+      }
+    }
+  }, [isScanning, scanStatus]);
+
+  const closeScanner = () => {
+    setIsScanning(false);
+    setScanStatus(null);
+  };
+
   // --- AUTHENTICATION ACTIONS ---
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -515,45 +299,11 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
-    signOut(auth);
-  };
-
-  // --- ADMIN: PDF IMPORT ---
-  const handleImportPDF = async () => {
-    if (!isAdmin) return;
-    setImportStatus('loading');
-    try {
-      const batch = writeBatch(db);
-      
-      // Schleife durch die große PDF Liste und füge sie zum Batch hinzu
-      fullPDFData.forEach((item, index) => {
-        const foodRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', `pdf_full_${index}`);
-        batch.set(foodRef, {
-          name: item.n,
-          category: item.c,
-          points: item.p,
-          isGlobal: true,
-          isDeleted: false
-        });
-      });
-      
-      await batch.commit(); // Alles auf einmal in die Datenbank feuern
-      
-      setImportStatus('success');
-      setTimeout(() => setImportStatus(null), 3000);
-    } catch (err) {
-      alert("Fehler beim Import: " + err.message);
-      setImportStatus(null);
-    }
-  };
-
+  const handleLogout = () => signOut(auth);
 
   // --- DATENVERARBEITUNG ---
   const allFoods = useMemo(() => {
-    // Da wir jetzt alles aus der Datenbank holen, brauchen wir die Dummy-Liste nicht mehr
-    let result = [...dbGlobalFoods.filter(f => !f.isDeleted)];
-    return [...result, ...customFoods];
+    return [...dbGlobalFoods.filter(f => !f.isDeleted), ...customFoods];
   }, [dbGlobalFoods, customFoods]);
 
   const allCategories = useMemo(() => {
@@ -577,7 +327,6 @@ export default function App() {
       if (sortOption === 'points_desc') return b.points - a.points;
       return 0;
     });
-
     return result;
   }, [allFoods, search, selectedCategory, sortOption]);
 
@@ -630,7 +379,6 @@ export default function App() {
   const handleSaveFood = async (e) => {
     e.preventDefault();
     if (!user || !editingFood) return;
-    
     try {
       if (editingFood.isCustom) {
         const foodRef = doc(db, 'artifacts', appId, 'users', user.uid, 'custom_foods', editingFood.id || Date.now().toString());
@@ -640,7 +388,7 @@ export default function App() {
           points: parseFloat(editingFood.points)
         });
       } else if (isAdmin) {
-        const foodRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', editingFood.id);
+        const foodRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', editingFood.id || Date.now().toString());
         await setDoc(foodRef, {
           name: editingFood.name, category: editingFood.category,
           kcal: Number(editingFood.kcal) || 0, fett: Number(editingFood.fett) || 0,
@@ -658,7 +406,7 @@ export default function App() {
         await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'custom_foods', editingFood.id));
       } else if (isAdmin) {
         const foodRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', editingFood.id);
-        await setDoc(foodRef, { isDeleted: true }, { merge: true });
+        await deleteDoc(foodRef); 
       }
       setEditingFood(null);
     } catch (err) { console.error("Error deleting food", err); }
@@ -706,16 +454,34 @@ export default function App() {
 
   // --- RENDER SCREENS ---
 
-  if (authLoading) {
-    return <div className="min-h-screen bg-[#F2F2F7] dark:bg-black flex items-center justify-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>;
+  if (initError) {
+    return (
+      <div className={`min-h-screen transition-colors duration-300 ${isDarkMode ? 'dark bg-black' : 'bg-[#F2F2F7]'} font-sans flex items-center justify-center p-4`}>
+        <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-xl p-8 text-center border-2 border-red-500/20">
+          <Shield className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Datenbank-Fehler</h1>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
+            Bitte trage deine echten Firebase-Daten in der Datei <b>App.jsx</b> (ab Zeile 16) ein.
+          </p>
+          <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-xl text-left">
+            <p className="text-xs text-red-600 dark:text-red-400 font-mono break-words">{initError}</p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
+  if (authLoading) {
+    return <div className="min-h-screen bg-[#F2F2F7] dark:bg-black flex items-center justify-center"><div className="w-8 h-8 border-4 border-blue-500 dark:border-teal-400 border-t-transparent rounded-full animate-spin"></div></div>;
+  }
+
+  // LOGIN SCREEN
   if (!user) {
     return (
       <div className={`min-h-screen transition-colors duration-300 ${isDarkMode ? 'dark bg-black' : 'bg-[#F2F2F7]'} font-sans flex items-center justify-center p-4`}>
         <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-xl p-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-blue-500 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-500/30">
+            <div className="w-16 h-16 bg-blue-500 dark:bg-teal-500 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30">
               <Utensils className="text-white w-8 h-8" />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">PointTracker</h1>
@@ -730,7 +496,7 @@ export default function App() {
               <input 
                 type="text" required placeholder="Benutzername"
                 value={usernameInput} onChange={(e) => setUsernameInput(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                className="w-full pl-12 pr-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500 transition-all"
               />
             </div>
             
@@ -739,11 +505,11 @@ export default function App() {
               <input 
                 type="password" required placeholder="Passwort"
                 value={password} onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                className="w-full pl-12 pr-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500 transition-all"
               />
             </div>
 
-            <button type="submit" className="w-full bg-blue-500 hover:bg-blue-600 text-white py-3.5 rounded-2xl font-bold transition-all shadow-md active:scale-95 mt-2">
+            <button type="submit" className="w-full bg-blue-500 hover:bg-blue-600 dark:bg-teal-500 dark:hover:bg-teal-600 text-white py-3.5 rounded-2xl font-bold transition-all shadow-md active:scale-95 mt-2">
               {isRegistering ? 'Registrieren' : 'Einloggen'}
             </button>
           </form>
@@ -751,7 +517,7 @@ export default function App() {
           <div className="mt-6 text-center">
             <button 
               onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); setUsernameInput(''); setPassword(''); }}
-              className="text-sm font-medium text-blue-500 hover:text-blue-600"
+              className="text-sm font-medium text-blue-500 hover:text-blue-600 dark:text-teal-400 dark:hover:text-teal-300"
             >
               {isRegistering ? 'Bereits registriert? Einloggen' : 'Neu hier? Account erstellen'}
             </button>
@@ -761,6 +527,7 @@ export default function App() {
     );
   }
 
+  // SPERRBILDSCHIRM
   if (userProfile?.isDeleted) {
     return (
       <div className="min-h-screen bg-[#F2F2F7] dark:bg-black flex items-center justify-center p-6 text-center">
@@ -774,32 +541,50 @@ export default function App() {
     );
   }
 
-  // --- MAIN APP VIEWS ---
-
   const renderDashboard = () => {
-    const progress = Math.min((todayPoints / dailyGoal) * 100, 100);
-    const radius = 60;
+    const remainingPoints = dailyGoal - todayPoints;
+    const isOverBudget = remainingPoints < 0;
+    
+    const progress = Math.max((remainingPoints / dailyGoal) * 100, 0); 
+    const radius = 54; 
     const circumference = 2 * Math.PI * radius;
     const strokeDashoffset = circumference - (progress / 100) * circumference;
 
+    const ringColor = isOverBudget ? 'text-red-500' : 'text-blue-500 dark:text-teal-400';
+
     return (
       <div className="space-y-6 animate-in fade-in duration-500">
-        <h1 className="text-3xl font-bold px-4 pt-4 text-gray-900 dark:text-white">Heute</h1>
+        <div className="px-5 pt-6 pb-2 bg-[#F2F2F7] dark:bg-black mb-2">
+          <h2 className="text-gray-500 dark:text-gray-400 text-sm font-medium uppercase tracking-widest mb-1">Heute</h2>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Hallo {userProfile?.name || 'Nutzer'} 👋</h1>
+        </div>
         
-        <div className="flex flex-col items-center justify-center p-6 bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-sm mx-4 relative">
-          <div className="relative flex items-center justify-center w-40 h-40">
-            <svg className="transform -rotate-90 w-40 h-40">
-              <circle cx="80" cy="80" r={radius} stroke="currentColor" strokeWidth="12" fill="transparent" className="text-gray-100 dark:text-gray-800" />
-              <circle cx="80" cy="80" r={radius} stroke="currentColor" strokeWidth="12" fill="transparent" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} className="text-blue-500 transition-all duration-1000 ease-out" />
+        <div className="flex items-center justify-between p-6 bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-sm mx-4 relative">
+          <div className="flex flex-col items-center flex-1">
+            <span className="text-xl font-bold text-gray-900 dark:text-white">
+              {dailyGoal.toString().replace('.', ',')}
+            </span>
+            <span className="text-[11px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mt-1">Ziel</span>
+          </div>
+
+          <div className="relative flex items-center justify-center w-36 h-36 shrink-0">
+            <svg className="transform -rotate-90 w-36 h-36">
+              <circle cx="72" cy="72" r={radius} stroke="currentColor" strokeWidth="10" fill="transparent" className="text-gray-100 dark:text-gray-800" />
+              <circle cx="72" cy="72" r={radius} stroke="currentColor" strokeWidth="10" fill="transparent" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" className={`${ringColor} transition-all duration-1000 ease-out`} />
             </svg>
-            <div className="absolute flex flex-col items-center">
-              <span className="text-4xl font-bold text-gray-900 dark:text-white tracking-tighter">
-                {todayPoints.toString().replace('.', ',')}
+            <div className="absolute flex flex-col items-center mt-1">
+              <span className={`text-4xl font-bold tracking-tighter ${isOverBudget ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>
+                {remainingPoints.toString().replace('.', ',')}
               </span>
-              <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                von {dailyGoal} P.
-              </span>
+              <span className={`text-xs font-bold mt-0.5 ${isOverBudget ? 'text-red-400' : 'text-gray-400 dark:text-gray-500 uppercase tracking-widest'}`}>übrig</span>
             </div>
+          </div>
+
+          <div className="flex flex-col items-center flex-1">
+            <span className={`text-xl font-bold ${isOverBudget ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>
+              {todayPoints.toString().replace('.', ',')}
+            </span>
+            <span className="text-[11px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mt-1">Genutzt</span>
           </div>
         </div>
 
@@ -819,7 +604,7 @@ export default function App() {
                     <p className="text-[14px] text-gray-500">{log.multiplier}x Portion</p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="font-bold text-blue-500">{log.points.toString().replace('.', ',')}</span>
+                    <span className="font-bold text-blue-500 dark:text-teal-400">{log.points.toString().replace('.', ',')}</span>
                     <button onClick={() => handleDeleteLog(log.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors">
                       <Trash2 size={18} />
                     </button>
@@ -828,7 +613,7 @@ export default function App() {
               ))}
             </ul>
           )}
-          <button onClick={() => setActiveTab('search')} className="w-full py-4 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-2xl font-semibold flex justify-center items-center gap-2 transition-colors">
+          <button onClick={() => setActiveTab('search')} className="w-full py-4 bg-blue-50 dark:bg-teal-900/20 hover:bg-blue-100 dark:hover:bg-teal-900/40 text-blue-600 dark:text-teal-400 rounded-2xl font-semibold flex justify-center items-center gap-2 transition-colors">
             <Plus size={20} /> Lebensmittel hinzufügen
           </button>
         </div>
@@ -837,22 +622,21 @@ export default function App() {
   };
 
   const renderSearch = () => (
-    <div className="space-y-4 animate-in fade-in duration-500 px-4 pt-4 pb-24 h-full flex flex-col">
+    <div className="space-y-4 animate-in fade-in duration-500 px-4 pt-6 pb-24 h-full flex flex-col">
       <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Suchen</h1>
       
-      <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white dark:bg-[#1C1C1E] shadow-sm shrink-0">
+      <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white dark:bg-[#1C1C1E] shadow-sm shrink-0 focus-within:ring-2 ring-blue-500 dark:ring-teal-500 transition-all">
         <Search size={20} className="text-gray-400" />
         <input type="text" placeholder="Lebensmittel suchen..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-transparent outline-none text-[17px] text-gray-900 dark:text-white placeholder-gray-400" />
+        <button onClick={() => { setIsScanning(true); setScanStatus(null); }} className="p-2 -mr-2 bg-blue-50 dark:bg-teal-900/30 text-blue-500 dark:text-teal-400 rounded-xl hover:bg-blue-100 dark:hover:bg-teal-900/50 transition-colors" title="Barcode Scannen">
+          <Scan size={20} />
+        </button>
       </div>
 
       <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1 pt-1 shrink-0">
         <div className="flex items-center bg-white dark:bg-[#1C1C1E] rounded-full px-3 py-1.5 border border-gray-200 dark:border-gray-800 shrink-0">
           <ArrowUpDown size={14} className="text-gray-400 mr-2" />
-          <select 
-            value={sortOption} 
-            onChange={e => setSortOption(e.target.value)}
-            className="bg-transparent text-sm text-gray-600 dark:text-gray-300 outline-none appearance-none pr-4"
-          >
+          <select value={sortOption} onChange={e => setSortOption(e.target.value)} className="bg-transparent text-sm text-gray-600 dark:text-gray-300 outline-none appearance-none pr-4">
             <option value="name_asc" className="text-black dark:bg-[#1C1C1E] dark:text-white">A - Z</option>
             <option value="name_desc" className="text-black dark:bg-[#1C1C1E] dark:text-white">Z - A</option>
             <option value="points_asc" className="text-black dark:bg-[#1C1C1E] dark:text-white">Punkte aufsteigend</option>
@@ -860,11 +644,11 @@ export default function App() {
           </select>
         </div>
 
-        <button onClick={() => setSelectedCategory('')} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${!selectedCategory ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-black' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
+        <button onClick={() => setSelectedCategory('')} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${!selectedCategory ? 'bg-blue-500 dark:bg-teal-500 text-white' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
           Alle
         </button>
         {allCategories.map(cat => (
-          <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === cat ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-black' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
+          <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === cat ? 'bg-blue-500 dark:bg-teal-500 text-white' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
             {cat}
           </button>
         ))}
@@ -876,7 +660,7 @@ export default function App() {
             {filteredFoods.map((food) => (
               <li key={food.id} className="p-4 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-[#2C2C2E] transition-colors cursor-pointer group">
                 <div className="flex-1 flex items-start gap-4" onClick={() => setSelectedFood(food)}>
-                  <div className="mt-1 p-2 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-500 shrink-0">
+                  <div className="mt-1 p-2 rounded-full bg-blue-50 dark:bg-teal-900/20 text-blue-500 dark:text-teal-400 shrink-0">
                     <Utensils size={18} />
                   </div>
                   <div>
@@ -889,7 +673,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0 ml-4">
                   {(isAdmin || food.isCustom) && (
-                    <button onClick={(e) => { e.stopPropagation(); setEditingFood(food); setShowNewCategoryInput(!allCategories.includes(food.category)); }} className="p-2 text-gray-400 hover:text-gray-800 dark:hover:text-white">
+                    <button onClick={(e) => { e.stopPropagation(); setEditingFood(food); setShowNewCategoryInput(!allCategories.includes(food.category)); }} className="p-2 text-gray-400 hover:text-blue-500 dark:hover:text-teal-400">
                       <Edit2 size={18} />
                     </button>
                   )}
@@ -901,14 +685,14 @@ export default function App() {
             ))}
           </ul>
         ) : (
-          <div className="p-10 text-center text-gray-500">Nichts gefunden. Du kannst im Profil eigene Lebensmittel anlegen!</div>
+          <div className="p-10 text-center text-gray-500">Nichts gefunden. Nutze den Scanner oder lege es manuell an!</div>
         )}
       </div>
     </div>
   );
 
   const renderHistory = () => (
-    <div className="space-y-6 animate-in fade-in duration-500 px-4 pt-4 pb-24">
+    <div className="space-y-6 animate-in fade-in duration-500 px-4 pt-6 pb-24">
       <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Historie</h1>
       {groupedHistory.length === 0 ? (
         <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl p-8 text-center shadow-sm">
@@ -941,47 +725,47 @@ export default function App() {
   );
 
   const renderProfile = () => (
-    <div className="space-y-6 animate-in fade-in duration-500 px-4 pt-4 pb-24">
+    <div className="space-y-6 animate-in fade-in duration-500 px-4 pt-6 pb-24">
       <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Profil</h1>
 
       <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <Moon className="text-gray-400" size={20} />
+            <Moon className="text-gray-400 dark:text-teal-400" size={20} />
             <span className="font-medium text-gray-900 dark:text-white">Dark-Mode</span>
           </div>
           <button onClick={() => setIsDarkMode(!isDarkMode)} className="w-14 h-8 bg-gray-200 dark:bg-[#2C2C2E] rounded-full relative transition-colors">
-            <div className={`w-6 h-6 bg-white rounded-full absolute top-1 transition-transform shadow-sm ${isDarkMode ? 'translate-x-7 bg-blue-500' : 'translate-x-1'}`} />
+            <div className={`w-6 h-6 bg-white rounded-full absolute top-1 transition-transform shadow-sm ${isDarkMode ? 'translate-x-7 bg-teal-500' : 'translate-x-1 bg-white'}`} />
           </button>
         </div>
 
         <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <Calculator className="text-gray-400" size={20} />
+            <Calculator className="text-gray-400 dark:text-teal-400" size={20} />
             <span className="font-medium text-gray-900 dark:text-white">Mein Tagesziel</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="font-bold text-blue-500">{dailyGoal} P.</span>
-            <button onClick={() => setShowGoalCalculator(true)} className="px-3 py-1.5 bg-gray-100 dark:bg-[#2C2C2E] rounded-xl text-sm font-semibold text-gray-700 dark:text-gray-300">Neu berechnen</button>
+            <span className="font-bold text-blue-500 dark:text-teal-400">{dailyGoal} P.</span>
+            <button onClick={() => setShowGoalCalculator(true)} className="px-3 py-1.5 bg-blue-50 dark:bg-teal-900/20 rounded-xl text-sm font-semibold text-blue-600 dark:text-teal-400">Neu berechnen</button>
           </div>
         </div>
       </div>
 
       <button onClick={() => { setEditingFood({ id: '', name: '', category: '', kcal: '', fett: '', points: 0, isCustom: true }); setShowNewCategoryInput(false); }} className="w-full bg-white dark:bg-[#1C1C1E] p-4 rounded-3xl shadow-sm flex items-center justify-between group active:scale-[0.98] transition-all">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-xl"><Plus size={20} /></div>
+          <div className="p-2 bg-blue-50 dark:bg-teal-900/20 text-blue-500 dark:text-teal-400 rounded-xl"><Plus size={20} /></div>
           <span className="font-medium text-[17px] text-gray-900 dark:text-white">Eigenes Lebensmittel anlegen</span>
         </div>
-        <ChevronRight className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors" />
+        <ChevronRight className="text-gray-400 group-hover:text-blue-500 dark:group-hover:text-teal-400 transition-colors" />
       </button>
 
-      <button onClick={handleLogout} className="w-full bg-red-50 dark:bg-red-900/10 p-4 rounded-3xl shadow-sm flex items-center justify-center gap-3 group active:scale-[0.98] transition-all mt-4">
+      <button onClick={handleLogout} className="w-full bg-red-50 dark:bg-red-900/10 p-4 rounded-3xl shadow-sm flex items-center justify-center gap-3 group active:scale-[0.98] transition-all mt-4 border border-red-100 dark:border-red-900/30">
         <LogOut size={20} className="text-red-500" />
         <span className="font-bold text-[17px] text-red-500">Abmelden</span>
       </button>
 
       <div className="text-center mt-8">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v3.0</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v4.6 (Scanner Edition)</p>
         <p className="text-xs text-gray-400 mt-1">
           Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'}
         </p>
@@ -990,32 +774,11 @@ export default function App() {
   );
 
   const renderAdminUsers = () => (
-    <div className="space-y-6 animate-in fade-in duration-500 px-4 pt-4 pb-24">
-      
-      {/* 1. PDF IMPORT SEKTION (NEU) */}
-      <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Bereich</h1>
-      
-      <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center gap-3 text-gray-900 dark:text-white">
-           <Database className="text-blue-500" />
-           <h2 className="text-xl font-bold">PDF-Datenbank</h2>
-        </div>
-        <p className="text-sm text-gray-500 dark:text-gray-400">Lade alle ~180 Lebensmittel aus der PDF in die globale Liste hoch.</p>
-        <button 
-          onClick={handleImportPDF}
-          disabled={importStatus === 'loading' || importStatus === 'success'}
-          className={`w-full py-4 rounded-2xl font-bold text-white transition-all flex items-center justify-center gap-3 ${importStatus === 'loading' ? 'bg-gray-400' : importStatus === 'success' ? 'bg-green-500' : 'bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-95'}`}
-        >
-          {importStatus === 'loading' ? 'Wird importiert...' : importStatus === 'success' ? 'Erfolgreich geladen!' : 'PDF-Daten importieren'}
-          {importStatus === 'success' && <CheckCircle2 size={20} />}
-        </button>
-      </div>
-
-      {/* 2. NUTZER VERWALTUNG */}
-      <div className="flex justify-between items-center mt-8">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Nutzer</h2>
+    <div className="space-y-6 animate-in fade-in duration-500 px-4 pt-6 pb-24">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Nutzer verwalten</h1>
         {Object.keys(pendingUserChanges).length > 0 && (
-          <button onClick={saveAdminUserChanges} className="px-4 py-2 bg-blue-500 text-white rounded-xl font-bold shadow-md active:scale-95 transition-all">Speichern</button>
+          <button onClick={saveAdminUserChanges} className="px-4 py-2 bg-blue-500 dark:bg-teal-500 text-white rounded-xl font-bold shadow-md active:scale-95 transition-all">Speichern</button>
         )}
       </div>
       <div className="space-y-3">
@@ -1029,10 +792,10 @@ export default function App() {
                   <p className="font-bold text-gray-900 dark:text-white">{p.name || 'Unbekannt'}</p>
                   <p className="text-xs text-gray-500 font-mono">ID: {p.uid}</p>
                 </div>
-                {p.uid === user.uid && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-lg font-bold">Du</span>}
+                {p.uid === user.uid && <span className="bg-blue-100 dark:bg-teal-900/30 text-blue-700 dark:text-teal-400 text-xs px-2 py-1 rounded-lg font-bold">Du</span>}
               </div>
               <div className="flex gap-2">
-                <select disabled={p.uid === user.uid} value={currentRole} onChange={(e) => handleAdminUserChange(p.uid, 'role', e.target.value)} className="flex-1 bg-gray-50 dark:bg-[#2C2C2E] text-sm text-gray-900 dark:text-white rounded-xl px-3 py-2 outline-none">
+                <select disabled={p.uid === user.uid} value={currentRole} onChange={(e) => handleAdminUserChange(p.uid, 'role', e.target.value)} className="flex-1 bg-gray-50 dark:bg-[#2C2C2E] text-sm text-gray-900 dark:text-white rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                   <option value="user" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">User</option>
                   <option value="admin" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Admin</option>
                 </select>
@@ -1048,7 +811,7 @@ export default function App() {
   );
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 bg-[#F2F2F7] dark:bg-black font-sans selection:bg-blue-500/30`}>
+    <div className={`min-h-screen transition-colors duration-300 bg-[#F2F2F7] dark:bg-black font-sans selection:bg-blue-500/30 dark:selection:bg-teal-500/30`}>
       <div className="max-w-md mx-auto h-screen relative shadow-2xl bg-[#F2F2F7] dark:bg-black overflow-hidden flex flex-col">
         <div className="flex-1 overflow-y-auto hide-scrollbar relative">
           {activeTab === 'dashboard' && renderDashboard()}
@@ -1058,21 +821,82 @@ export default function App() {
           {activeTab === 'users' && isAdmin && renderAdminUsers()}
         </div>
 
-        <div className="absolute bottom-0 w-full bg-white/70 dark:bg-[#1C1C1E]/70 backdrop-blur-xl border-t border-gray-200/50 dark:border-gray-800/50 pb-safe pt-2 px-4 flex justify-around items-center z-40">
+        <div className="absolute bottom-0 w-full bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-xl border-t border-gray-200/50 dark:border-gray-800/50 pb-safe pt-2 px-4 flex justify-around items-center z-40">
           {[
             { id: 'dashboard', icon: Home, label: 'Heute' },
             { id: 'search', icon: Search, label: 'Suche' },
             { id: 'history', icon: Clock, label: 'Historie' },
             { id: 'profile', icon: User, label: 'Profil' },
-            ...(isAdmin ? [{ id: 'users', icon: Users, label: 'Admin' }] : [])
+            ...(isAdmin ? [{ id: 'users', icon: Users, label: 'Nutzer' }] : [])
           ].map(item => (
-            <button key={item.id} onClick={() => setActiveTab(item.id)} className={`flex flex-col items-center p-2 transition-all ${activeTab === item.id ? 'text-blue-500 scale-110' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
+            <button key={item.id} onClick={() => setActiveTab(item.id)} className={`flex flex-col items-center p-2 transition-all ${activeTab === item.id ? 'text-blue-500 dark:text-teal-400 scale-110' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
               <item.icon size={22} strokeWidth={activeTab === item.id ? 2.5 : 2} />
               <span className="text-[10px] mt-1 font-semibold">{item.label}</span>
             </button>
           ))}
         </div>
 
+        {/* MODAL: BARCODE SCANNER */}
+        {isScanning && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+            <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-6 relative overflow-hidden">
+              <button onClick={closeScanner} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-[#2C2C2E] rounded-full text-gray-500 z-50">
+                <X size={20} />
+              </button>
+              
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4 text-center">Barcode scannen</h3>
+
+              {scanStatus === 'loading' ? (
+                <div className="py-12 flex flex-col items-center justify-center text-center">
+                   <div className="w-12 h-12 border-4 border-blue-500 dark:border-teal-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                   <p className="text-gray-600 dark:text-gray-300 font-medium">Produkt wird in der Datenbank gesucht...</p>
+                </div>
+              ) : scanStatus === 'https_required' ? (
+                <div className="py-8 text-center animate-in fade-in zoom-in duration-300">
+                   <div className="w-16 h-16 bg-orange-100 dark:bg-orange-900/30 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                     <Shield size={28}/>
+                   </div>
+                   <p className="text-gray-900 dark:text-white text-xl font-bold mb-2">Sichere Verbindung fehlt</p>
+                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Handy-Browser erlauben die Kamera nur über eine sichere Verbindung (HTTPS). Bitte lade die App bei Netlify hoch, um den Scanner auf dem Handy zu testen.</p>
+                   <button onClick={closeScanner} className="w-full py-4 bg-gray-200 dark:bg-[#2C2C2E] text-gray-900 dark:text-white rounded-2xl font-bold">
+                     Verstanden
+                   </button>
+                </div>
+              ) : scanStatus === 'not_found' ? (
+                <div className="py-8 text-center animate-in fade-in zoom-in duration-300">
+                   <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                     <Search size={28}/>
+                   </div>
+                   <p className="text-gray-900 dark:text-white text-xl font-bold mb-2">Nicht gefunden</p>
+                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Dieses Produkt ist noch nicht in der Datenbank.</p>
+                   <button onClick={() => { closeScanner(); setEditingFood({ id: '', name: '', category: '', kcal: '', fett: '', points: 0, isCustom: true }); setShowNewCategoryInput(false); }} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white rounded-2xl font-bold shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30">
+                     Manuell anlegen
+                   </button>
+                </div>
+              ) : scanStatus === 'error' ? (
+                <div className="py-8 text-center">
+                   <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                     <Lock size={28}/>
+                   </div>
+                   <p className="text-gray-900 dark:text-white text-xl font-bold mb-2">Kamera blockiert</p>
+                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Erlaube in deinem Browser den Kamera-Zugriff, um scannen zu können.</p>
+                   <button onClick={closeScanner} className="w-full py-4 bg-gray-200 dark:bg-[#2C2C2E] text-gray-900 dark:text-white rounded-2xl font-bold">
+                     Schließen
+                   </button>
+                </div>
+              ) : (
+                <div>
+                   <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden shadow-inner aspect-square relative flex items-center justify-center">
+                      <p className="text-gray-500 text-sm absolute">Kamera wird gestartet...</p>
+                   </div>
+                   <p className="text-center text-sm font-medium text-gray-500 mt-6 animate-pulse">Halte den Strichcode in das Bild</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: Portion wählen */}
         {selectedFood && (
           <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity">
             <div className="w-full sm:w-11/12 max-w-sm bg-white dark:bg-[#1C1C1E] rounded-t-3xl sm:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full sm:fade-in duration-300">
@@ -1083,17 +907,17 @@ export default function App() {
                   <p className="text-gray-500 mt-1">{selectedFood.category} • {selectedFood.points.toString().replace('.', ',')} P.</p>
                 </div>
                 <div className="space-y-4">
-                  <button onClick={() => handleAddLog(selectedFood, 0.5)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6">
+                  <button onClick={() => handleAddLog(selectedFood, 0.5)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6 focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <span>Halbe Portion (0,5x)</span>
-                    <span className="text-blue-500">{(selectedFood.points * 0.5).toString().replace('.', ',')} P.</span>
+                    <span className="text-blue-500 dark:text-teal-400">{(selectedFood.points * 0.5).toString().replace('.', ',')} P.</span>
                   </button>
-                  <button onClick={() => handleAddLog(selectedFood, 1)} className="w-full py-4 bg-blue-500 text-white shadow-lg shadow-blue-500/30 rounded-2xl font-bold flex justify-between px-6">
+                  <button onClick={() => handleAddLog(selectedFood, 1)} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30 rounded-2xl font-bold flex justify-between px-6">
                     <span>Normale Portion (1x)</span>
                     <span>{selectedFood.points.toString().replace('.', ',')} P.</span>
                   </button>
-                  <button onClick={() => handleAddLog(selectedFood, 2)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6">
+                  <button onClick={() => handleAddLog(selectedFood, 2)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6 focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <span>Doppelte Portion (2x)</span>
-                    <span className="text-blue-500">{(selectedFood.points * 2).toString().replace('.', ',')} P.</span>
+                    <span className="text-blue-500 dark:text-teal-400">{(selectedFood.points * 2).toString().replace('.', ',')} P.</span>
                   </button>
                 </div>
               </div>
@@ -1101,9 +925,10 @@ export default function App() {
           </div>
         )}
 
+        {/* MODAL: Lebensmittel bearbeiten / neu erstellen */}
         {editingFood && (
-          <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="w-full sm:w-11/12 max-w-sm bg-white dark:bg-[#1C1C1E] rounded-t-3xl sm:rounded-3xl shadow-2xl p-6">
+          <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm overflow-y-auto pt-10 pb-10">
+            <div className="w-full sm:w-11/12 max-w-sm bg-white dark:bg-[#1C1C1E] rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 relative">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">{editingFood.id ? 'Bearbeiten' : 'Neu anlegen'}</h3>
                 <div className="flex gap-2">
@@ -1114,18 +939,18 @@ export default function App() {
               <form onSubmit={handleSaveFood} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1.5 text-gray-600 dark:text-gray-400 ml-1">Name & Menge</label>
-                  <input type="text" required value={editingFood.name} onChange={e => setEditingFood({...editingFood, name: e.target.value})} className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 outline-none" />
+                  <input type="text" required value={editingFood.name} onChange={e => setEditingFood({...editingFood, name: e.target.value})} className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 dark:focus:border-teal-500 outline-none transition-colors" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5 text-gray-600 dark:text-gray-400 ml-1">Kategorie</label>
                   {showNewCategoryInput ? (
                     <div className="flex gap-2">
-                      <input type="text" required autoFocus placeholder="Neue Kategorie..." value={editingFood.category} onChange={e => setEditingFood({...editingFood, category: e.target.value})} className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 outline-none" />
+                      <input type="text" required autoFocus placeholder="Neue Kategorie..." value={editingFood.category} onChange={e => setEditingFood({...editingFood, category: e.target.value})} className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 dark:focus:border-teal-500 outline-none transition-colors" />
                       <button type="button" onClick={() => setShowNewCategoryInput(false)} className="px-4 bg-gray-200 dark:bg-[#2C2C2E] rounded-2xl text-gray-600 dark:text-gray-300"><X size={20} /></button>
                     </div>
                   ) : (
                     <div className="relative">
-                      <select required value={editingFood.category} onChange={(e) => { if (e.target.value === '___NEW___') { setShowNewCategoryInput(true); setEditingFood({...editingFood, category: ''}); } else setEditingFood({...editingFood, category: e.target.value}); }} className={`w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] border-2 border-transparent focus:border-blue-500 outline-none appearance-none ${!editingFood.category ? 'text-gray-400' : 'text-gray-900 dark:text-white'}`}>
+                      <select required value={editingFood.category} onChange={(e) => { if (e.target.value === '___NEW___') { setShowNewCategoryInput(true); setEditingFood({...editingFood, category: ''}); } else setEditingFood({...editingFood, category: e.target.value}); }} className={`w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] border-2 border-transparent focus:border-blue-500 dark:focus:border-teal-500 outline-none appearance-none transition-colors ${!editingFood.category ? 'text-gray-400' : 'text-gray-900 dark:text-white'}`}>
                         <option value="" disabled className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Bitte wählen...</option>
                         {allCategories.map(cat => <option key={cat} value={cat} className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">{cat}</option>)}
                         <option value="___NEW___" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">+ Neue Kategorie erstellen...</option>
@@ -1137,18 +962,18 @@ export default function App() {
                 <div className="flex gap-4">
                   <div className="flex-1">
                     <label className="block text-sm font-medium mb-1.5 text-gray-600 dark:text-gray-400 ml-1">Kalorien (kcal)</label>
-                    <input type="number" required={!editingFood.id} value={editingFood.kcal || ''} onChange={e => handleFoodCalcChange('kcal', e.target.value)} placeholder="0" className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 outline-none" />
+                    <input type="number" required={!editingFood.id} value={editingFood.kcal || ''} onChange={e => handleFoodCalcChange('kcal', e.target.value)} placeholder="0" className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 dark:focus:border-teal-500 outline-none transition-colors" />
                   </div>
                   <div className="flex-1">
                     <label className="block text-sm font-medium mb-1.5 text-gray-600 dark:text-gray-400 ml-1">Fett (g)</label>
-                    <input type="number" step="0.1" required={!editingFood.id} value={editingFood.fett || ''} onChange={e => handleFoodCalcChange('fett', e.target.value)} placeholder="0" className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 outline-none" />
+                    <input type="number" step="0.1" required={!editingFood.id} value={editingFood.fett || ''} onChange={e => handleFoodCalcChange('fett', e.target.value)} placeholder="0" className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 dark:focus:border-teal-500 outline-none transition-colors" />
                   </div>
                 </div>
-                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-4 flex justify-between items-center mt-2 border border-blue-100 dark:border-blue-900/50">
-                  <span className="font-semibold text-blue-600 dark:text-blue-400">Punkte gesamt:</span>
-                  <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">{editingFood.points.toString().replace('.', ',')}</span>
+                <div className="bg-blue-50 dark:bg-teal-900/20 rounded-2xl p-4 flex justify-between items-center mt-2 border border-blue-100 dark:border-teal-900/50 transition-colors">
+                  <span className="font-semibold text-blue-600 dark:text-teal-400">Punkte gesamt:</span>
+                  <span className="text-2xl font-bold text-blue-600 dark:text-teal-400">{editingFood.points.toString().replace('.', ',')}</span>
                 </div>
-                <button type="submit" className="w-full mt-6 flex items-center justify-center gap-2 bg-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-blue-500/30 active:scale-[0.98]">
+                <button type="submit" className="w-full mt-6 flex items-center justify-center gap-2 bg-blue-500 dark:bg-teal-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30 active:scale-[0.98] transition-all">
                   <Save size={20} /> Speichern
                 </button>
               </form>
@@ -1156,6 +981,7 @@ export default function App() {
           </div>
         )}
 
+        {/* MODAL: Tagesziel Rechner */}
         {showGoalCalculator && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
             <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
@@ -1166,7 +992,7 @@ export default function App() {
               <div className="space-y-5">
                 <div>
                   <label className="block font-bold mb-2 text-gray-900 dark:text-white">A. Geschlecht</label>
-                  <select value={goalData.gender} onChange={e => setGoalData({...goalData, gender: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none">
+                  <select value={goalData.gender} onChange={e => setGoalData({...goalData, gender: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <option value="" disabled className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Wählen...</option>
                     <option value="W" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Weiblich</option>
                     <option value="M" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Männlich</option>
@@ -1174,7 +1000,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block font-bold mb-2 text-gray-900 dark:text-white">B. Alter</label>
-                  <select value={goalData.age} onChange={e => setGoalData({...goalData, age: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none">
+                  <select value={goalData.age} onChange={e => setGoalData({...goalData, age: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <option value="" disabled className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Wählen...</option>
                     <option value="17-26" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">17–26 Jahre</option>
                     <option value="27-36" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">27–36 Jahre</option>
@@ -1185,11 +1011,11 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block font-bold mb-2 text-gray-900 dark:text-white">C. Gewicht (in kg)</label>
-                  <input type="number" value={goalData.weight} onChange={e => setGoalData({...goalData, weight: e.target.value})} placeholder="z.B. 84" className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none" />
+                  <input type="number" value={goalData.weight} onChange={e => setGoalData({...goalData, weight: e.target.value})} placeholder="z.B. 84" className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500" />
                 </div>
                 <div>
                   <label className="block font-bold mb-2 text-gray-900 dark:text-white">D. Körpergröße</label>
-                  <select value={goalData.height} onChange={e => setGoalData({...goalData, height: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none">
+                  <select value={goalData.height} onChange={e => setGoalData({...goalData, height: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <option value="" disabled className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Wählen...</option>
                     <option value="<1.60" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Unter 1,60 m</option>
                     <option value=">=1.60" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">1,60 m oder größer</option>
@@ -1197,7 +1023,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block font-bold mb-2 text-gray-900 dark:text-white">E. Aktivität (Alltag)</label>
-                  <select value={goalData.activity} onChange={e => setGoalData({...goalData, activity: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none">
+                  <select value={goalData.activity} onChange={e => setGoalData({...goalData, activity: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white p-3 rounded-xl border border-gray-200 dark:border-gray-700 outline-none appearance-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <option value="" disabled className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Wählen...</option>
                     <option value="0" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Hauptsächlich sitzend</option>
                     <option value="2" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Hauptsächlich stehend</option>
@@ -1205,7 +1031,7 @@ export default function App() {
                     <option value="6" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Sehr anstrengende körperliche Arbeit</option>
                   </select>
                 </div>
-                <button onClick={calculateGoal} disabled={!goalData.gender || !goalData.age || !goalData.weight || !goalData.height || !goalData.activity} className="w-full mt-4 flex justify-center items-center gap-2 bg-blue-500 disabled:bg-blue-300 text-white py-4 rounded-2xl font-bold transition-all active:scale-95">
+                <button onClick={calculateGoal} disabled={!goalData.gender || !goalData.age || !goalData.weight || !goalData.height || !goalData.activity} className="w-full mt-4 flex justify-center items-center gap-2 bg-blue-500 dark:bg-teal-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white py-4 rounded-2xl font-bold transition-all active:scale-95">
                   Tagesziel festlegen
                 </button>
               </div>
