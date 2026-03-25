@@ -6,14 +6,13 @@ import {
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, signOut 
+  getAuth, onAuthStateChanged, signInWithCustomToken, signInAnonymously,
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut 
 } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, addDoc } from 'firebase/firestore';
 
 // ============================================================================
 // 1. FIREBASE SETUP
-// TRAGE HIER DEINE ECHTEN FIREBASE DATEN EIN FÜR DEINE LOKALE TESTUMGEBUNG:
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyDYJNiJtKccTPlnyykZwWMrOgza0qjW4ZY",
@@ -27,7 +26,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = "pointtracker-app";
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'pointtracker-app';
 // ============================================================================
 
 // --- 2. HELPER FUNKTIONEN ---
@@ -89,6 +88,7 @@ export default function App() {
   // Scanner States
   const [isScanning, setIsScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState(null); // null | 'loading' | 'not_found' | 'error'
+  const [manualBarcode, setManualBarcode] = useState(''); 
   const scannerRef = useRef(null);
 
   const [showGoalCalculator, setShowGoalCalculator] = useState(false);
@@ -173,25 +173,46 @@ export default function App() {
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
-  // --- BARCODE SCANNER LOGIK ---
+  // --- BARCODE SCANNER LOGIK (MIT CRASH-SCHUTZ) ---
+  const stopScannerSafely = async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+        scannerRef.current.clear();
+      } catch (e) {
+        console.warn("Kamera konnte nicht sanft gestoppt werden.", e);
+      }
+      scannerRef.current = null;
+    }
+  };
+
   const handleBarcodeScanned = async (barcode) => {
+    if (!barcode.trim()) return;
+    
+    // WICHTIG: ZUERST die Kamera stoppen, BEVOR sich das UI ändert und die Kamera-Box gelöscht wird!
+    await stopScannerSafely();
+
     setScanStatus('loading');
     try {
-      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode.trim()}.json`);
       const data = await res.json();
       
       if (data.status === 1) {
         const p = data.product;
         const name = p.product_name || 'Unbekanntes Produkt';
-        const brand = p.brands ? ` (${p.brands.split(',')[0]})` : '';
-        const kcal = p.nutriments?.['energy-kcal_100g'] || 0;
-        const fat = p.nutriments?.fat_100g || 0;
+        const brandStr = p.brands ? String(p.brands).split(',')[0] : '';
+        const brand = brandStr ? ` (${brandStr})` : '';
+        
+        // Sicherheits-Check: Falls die Werte fehlen oder Text sind, werden sie 0
+        const kcal = Number(p.nutriments?.['energy-kcal_100g']) || 0;
+        const fat = Number(p.nutriments?.fat_100g) || 0;
         
         // Automatische Punkteberechnung nach Formel
         const points = Math.round(((kcal / 60) + (fat / 9)) * 2) / 2;
 
         setIsScanning(false);
         setScanStatus(null);
+        setManualBarcode('');
         
         setEditingFood({
           id: '',
@@ -199,7 +220,7 @@ export default function App() {
           category: '', 
           kcal: kcal,
           fett: fat,
-          points: points,
+          points: points || 0, // Fallback auf 0 Punkte
           isCustom: true
         });
         setShowNewCategoryInput(false);
@@ -211,37 +232,36 @@ export default function App() {
     }
   };
 
+  const closeScanner = async () => {
+    await stopScannerSafely();
+    setIsScanning(false);
+    setScanStatus(null);
+    setManualBarcode('');
+  };
+
   useEffect(() => {
     if (isScanning && !scanStatus) {
       const startCamera = async () => {
-        const Html5Qrcode = window.Html5Qrcode;
-        if (!Html5Qrcode) return;
+        // Kurze Pause, damit die "reader" Box wirklich auf dem Bildschirm ist
+        setTimeout(async () => {
+          const Html5Qrcode = window.Html5Qrcode;
+          if (!Html5Qrcode || !document.getElementById('reader')) return;
 
-        // NEU: Verhindert den Absturz (weißen Bildschirm) auf HTTP-Verbindungen
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          console.error("Kamera API blockiert. HTTPS wird benötigt.");
-          setScanStatus('https_required');
-          return;
-        }
-
-        scannerRef.current = new Html5Qrcode("reader");
-        try {
-          await scannerRef.current.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 250 } },
-            async (decodedText) => {
-              if(scannerRef.current && scannerRef.current.isScanning) {
-                await scannerRef.current.stop();
-                scannerRef.current.clear();
-              }
-              handleBarcodeScanned(decodedText);
-            },
-            (errorMessage) => { /* Ignorieren bei Nicht-Erkennung */ }
-          );
-        } catch (err) {
-          console.error("Camera start failed", err);
-          setScanStatus('error');
-        }
+          scannerRef.current = new Html5Qrcode("reader");
+          try {
+            await scannerRef.current.start(
+              { facingMode: "environment" },
+              { fps: 10, qrbox: { width: 250, height: 250 } },
+              async (decodedText) => {
+                handleBarcodeScanned(decodedText);
+              },
+              (errorMessage) => { /* Ignorieren bei Nicht-Erkennung */ }
+            );
+          } catch (err) {
+            console.error("Camera start failed", err);
+            // Läuft still im Hintergrund weiter -> Manuelle Eingabe ist ja da.
+          }
+        }, 100); 
       };
 
       if (!window.Html5Qrcode) {
@@ -254,17 +274,13 @@ export default function App() {
       }
     }
 
+    // Wenn die Komponente stirbt, räumen wir die Kamera sauber auf
     return () => {
-      if (scannerRef.current && scannerRef.current.isScanning) {
-        scannerRef.current.stop().then(() => scannerRef.current.clear()).catch(console.error);
+      if (scannerRef.current) {
+        scannerRef.current.stop().then(() => scannerRef.current.clear()).catch(() => {});
       }
     }
   }, [isScanning, scanStatus]);
-
-  const closeScanner = () => {
-    setIsScanning(false);
-    setScanStatus(null);
-  };
 
   // --- AUTHENTICATION ACTIONS ---
   const handleAuth = async (e) => {
@@ -292,7 +308,23 @@ export default function App() {
         await signInWithEmailAndPassword(auth, fakeEmail, password);
       }
     } catch (err) {
-      if (err.code === 'auth/email-already-in-use') setAuthError('Dieser Benutzername ist bereits vergeben.');
+      if (err.code === 'auth/operation-not-allowed') {
+        // === VORSCHAU-FALLBACK === 
+        try {
+          let userCred;
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            userCred = await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            userCred = await signInAnonymously(auth);
+          }
+          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', userCred.user.uid), {
+             uid: userCred.user.uid, name: usernameInput.trim(), role: 'user', isDeleted: false, dailyGoal: 30
+          }, { merge: true });
+        } catch (fallbackErr) { 
+          setAuthError('Vorschau-Login fehlgeschlagen: ' + fallbackErr.message); 
+        }
+      }
+      else if (err.code === 'auth/email-already-in-use') setAuthError('Dieser Benutzername ist bereits vergeben.');
       else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') setAuthError('Falsches Passwort oder Benutzername existiert nicht.');
       else if (err.code === 'auth/weak-password') setAuthError('Das Passwort muss mindestens 6 Zeichen lang sein.');
       else setAuthError('Ein Fehler ist aufgetreten: ' + err.message);
@@ -461,7 +493,7 @@ export default function App() {
           <Shield className="w-16 h-16 text-red-500 mx-auto mb-4" />
           <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Datenbank-Fehler</h1>
           <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
-            Bitte trage deine echten Firebase-Daten in der Datei <b>App.jsx</b> (ab Zeile 16) ein.
+            Bitte trage deine echten Firebase-Daten in der Datei <b>App.jsx</b> ein.
           </p>
           <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-xl text-left">
             <p className="text-xs text-red-600 dark:text-red-400 font-mono break-words">{initError}</p>
@@ -522,20 +554,6 @@ export default function App() {
               {isRegistering ? 'Bereits registriert? Einloggen' : 'Neu hier? Account erstellen'}
             </button>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  // SPERRBILDSCHIRM
-  if (userProfile?.isDeleted) {
-    return (
-      <div className="min-h-screen bg-[#F2F2F7] dark:bg-black flex items-center justify-center p-6 text-center">
-        <div className="bg-white dark:bg-[#1C1C1E] p-8 rounded-3xl shadow-xl max-w-sm w-full">
-          <Shield className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Account gesperrt</h1>
-          <p className="text-gray-500 dark:text-gray-400 mb-6">Dein Account wurde von einem Administrator deaktiviert.</p>
-          <button onClick={handleLogout} className="px-6 py-2 bg-gray-200 dark:bg-[#2C2C2E] text-gray-900 dark:text-white rounded-xl font-bold">Abmelden</button>
         </div>
       </div>
     );
@@ -628,7 +646,7 @@ export default function App() {
       <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white dark:bg-[#1C1C1E] shadow-sm shrink-0 focus-within:ring-2 ring-blue-500 dark:ring-teal-500 transition-all">
         <Search size={20} className="text-gray-400" />
         <input type="text" placeholder="Lebensmittel suchen..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-transparent outline-none text-[17px] text-gray-900 dark:text-white placeholder-gray-400" />
-        <button onClick={() => { setIsScanning(true); setScanStatus(null); }} className="p-2 -mr-2 bg-blue-50 dark:bg-teal-900/30 text-blue-500 dark:text-teal-400 rounded-xl hover:bg-blue-100 dark:hover:bg-teal-900/50 transition-colors" title="Barcode Scannen">
+        <button onClick={() => { setIsScanning(true); setScanStatus(null); setManualBarcode(''); }} className="p-2 -mr-2 bg-blue-50 dark:bg-teal-900/30 text-blue-500 dark:text-teal-400 rounded-xl hover:bg-blue-100 dark:hover:bg-teal-900/50 transition-colors" title="Barcode Scannen">
           <Scan size={20} />
         </button>
       </div>
@@ -678,7 +696,7 @@ export default function App() {
                     </button>
                   )}
                   <div onClick={() => setSelectedFood(food)} className="flex items-center justify-center bg-gray-100 dark:bg-[#2C2C2E] text-gray-900 dark:text-gray-300 px-3 py-1.5 rounded-xl font-semibold min-w-[3.5rem]">
-                    {food.points.toString().replace('.', ',')}
+                    {(food.points || 0).toString().replace('.', ',')}
                   </div>
                 </div>
               </li>
@@ -765,7 +783,7 @@ export default function App() {
       </button>
 
       <div className="text-center mt-8">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v4.6 (Scanner Edition)</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v5.1 (Scanner Edition)</p>
         <p className="text-xs text-gray-400 mt-1">
           Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'}
         </p>
@@ -839,28 +857,18 @@ export default function App() {
         {/* MODAL: BARCODE SCANNER */}
         {isScanning && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
-            <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-6 relative overflow-hidden">
-              <button onClick={closeScanner} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-[#2C2C2E] rounded-full text-gray-500 z-50">
-                <X size={20} />
-              </button>
-              
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4 text-center">Barcode scannen</h3>
+            <div className="w-full max-w-sm bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl p-6 relative overflow-hidden flex flex-col">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white">Barcode scannen</h3>
+                <button onClick={closeScanner} className="p-2 bg-gray-100 dark:bg-[#2C2C2E] rounded-full text-gray-500">
+                  <X size={20} />
+                </button>
+              </div>
 
               {scanStatus === 'loading' ? (
                 <div className="py-12 flex flex-col items-center justify-center text-center">
                    <div className="w-12 h-12 border-4 border-blue-500 dark:border-teal-500 border-t-transparent rounded-full animate-spin mb-4"></div>
                    <p className="text-gray-600 dark:text-gray-300 font-medium">Produkt wird in der Datenbank gesucht...</p>
-                </div>
-              ) : scanStatus === 'https_required' ? (
-                <div className="py-8 text-center animate-in fade-in zoom-in duration-300">
-                   <div className="w-16 h-16 bg-orange-100 dark:bg-orange-900/30 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                     <Shield size={28}/>
-                   </div>
-                   <p className="text-gray-900 dark:text-white text-xl font-bold mb-2">Sichere Verbindung fehlt</p>
-                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Handy-Browser erlauben die Kamera nur über eine sichere Verbindung (HTTPS). Bitte lade die App bei Netlify hoch, um den Scanner auf dem Handy zu testen.</p>
-                   <button onClick={closeScanner} className="w-full py-4 bg-gray-200 dark:bg-[#2C2C2E] text-gray-900 dark:text-white rounded-2xl font-bold">
-                     Verstanden
-                   </button>
                 </div>
               ) : scanStatus === 'not_found' ? (
                 <div className="py-8 text-center animate-in fade-in zoom-in duration-300">
@@ -873,23 +881,31 @@ export default function App() {
                      Manuell anlegen
                    </button>
                 </div>
-              ) : scanStatus === 'error' ? (
-                <div className="py-8 text-center">
-                   <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                     <Lock size={28}/>
-                   </div>
-                   <p className="text-gray-900 dark:text-white text-xl font-bold mb-2">Kamera blockiert</p>
-                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Erlaube in deinem Browser den Kamera-Zugriff, um scannen zu können.</p>
-                   <button onClick={closeScanner} className="w-full py-4 bg-gray-200 dark:bg-[#2C2C2E] text-gray-900 dark:text-white rounded-2xl font-bold">
-                     Schließen
-                   </button>
-                </div>
               ) : (
-                <div>
-                   <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden shadow-inner aspect-square relative flex items-center justify-center">
+                <div className="flex flex-col gap-4">
+                   <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden shadow-inner aspect-square relative flex items-center justify-center border-2 border-gray-100 dark:border-[#2C2C2E]">
                       <p className="text-gray-500 text-sm absolute">Kamera wird gestartet...</p>
                    </div>
-                   <p className="text-center text-sm font-medium text-gray-500 mt-6 animate-pulse">Halte den Strichcode in das Bild</p>
+                   
+                   <div className="bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl p-4 mt-2 border border-gray-100 dark:border-gray-800">
+                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 text-center">Fokus klappt nicht?</p>
+                     <div className="flex gap-2">
+                       <input 
+                         type="number" 
+                         placeholder="Zahl unterm Barcode..." 
+                         value={manualBarcode} 
+                         onChange={e => setManualBarcode(e.target.value)} 
+                         className="flex-1 bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white px-3 py-2 rounded-xl outline-none text-sm focus:ring-2 ring-blue-500 dark:ring-teal-500"
+                       />
+                       <button 
+                         onClick={() => handleBarcodeScanned(manualBarcode)}
+                         disabled={!manualBarcode}
+                         className="bg-blue-500 dark:bg-teal-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white px-4 py-2 rounded-xl font-bold text-sm"
+                       >
+                         Suchen
+                       </button>
+                     </div>
+                   </div>
                 </div>
               )}
             </div>
@@ -904,20 +920,20 @@ export default function App() {
                 <button onClick={() => setSelectedFood(null)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-[#2C2C2E] rounded-full text-gray-500"><X size={20} /></button>
                 <div className="mt-2 mb-6 text-center">
                   <h3 className="text-2xl font-bold text-gray-900 dark:text-white leading-tight">{selectedFood.name}</h3>
-                  <p className="text-gray-500 mt-1">{selectedFood.category} • {selectedFood.points.toString().replace('.', ',')} P.</p>
+                  <p className="text-gray-500 mt-1">{selectedFood.category} • {(selectedFood.points || 0).toString().replace('.', ',')} P.</p>
                 </div>
                 <div className="space-y-4">
                   <button onClick={() => handleAddLog(selectedFood, 0.5)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6 focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <span>Halbe Portion (0,5x)</span>
-                    <span className="text-blue-500 dark:text-teal-400">{(selectedFood.points * 0.5).toString().replace('.', ',')} P.</span>
+                    <span className="text-blue-500 dark:text-teal-400">{((selectedFood.points || 0) * 0.5).toString().replace('.', ',')} P.</span>
                   </button>
                   <button onClick={() => handleAddLog(selectedFood, 1)} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30 rounded-2xl font-bold flex justify-between px-6">
                     <span>Normale Portion (1x)</span>
-                    <span>{selectedFood.points.toString().replace('.', ',')} P.</span>
+                    <span>{(selectedFood.points || 0).toString().replace('.', ',')} P.</span>
                   </button>
                   <button onClick={() => handleAddLog(selectedFood, 2)} className="w-full py-4 bg-gray-50 dark:bg-[#2C2C2E] rounded-2xl font-semibold text-gray-900 dark:text-white flex justify-between px-6 focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                     <span>Doppelte Portion (2x)</span>
-                    <span className="text-blue-500 dark:text-teal-400">{(selectedFood.points * 2).toString().replace('.', ',')} P.</span>
+                    <span className="text-blue-500 dark:text-teal-400">{((selectedFood.points || 0) * 2).toString().replace('.', ',')} P.</span>
                   </button>
                 </div>
               </div>
@@ -971,7 +987,7 @@ export default function App() {
                 </div>
                 <div className="bg-blue-50 dark:bg-teal-900/20 rounded-2xl p-4 flex justify-between items-center mt-2 border border-blue-100 dark:border-teal-900/50 transition-colors">
                   <span className="font-semibold text-blue-600 dark:text-teal-400">Punkte gesamt:</span>
-                  <span className="text-2xl font-bold text-blue-600 dark:text-teal-400">{editingFood.points.toString().replace('.', ',')}</span>
+                  <span className="text-2xl font-bold text-blue-600 dark:text-teal-400">{(editingFood.points || 0).toString().replace('.', ',')}</span>
                 </div>
                 <button type="submit" className="w-full mt-6 flex items-center justify-center gap-2 bg-blue-500 dark:bg-teal-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30 active:scale-[0.98] transition-all">
                   <Save size={20} /> Speichern
