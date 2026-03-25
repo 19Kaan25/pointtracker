@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, Moon, Sun, Utensils, Edit2, Shield, X, Save, 
   Home, Clock, User, Plus, ChevronRight, PieChart, Trash2,
-  Calculator, Users, ArrowUpDown, LogOut, Lock, Scan
+  Calculator, Users, ArrowUpDown, LogOut, Lock, Scan, Heart
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -56,6 +56,14 @@ const usernameToFakeEmail = (uname) => {
   return `${hex}@pointtracker.local`;
 };
 
+// NEU: Beschriftungen für das Custom-Select Feld
+const sortLabels = {
+  name_asc: "A - Z",
+  name_desc: "Z - A",
+  points_asc: "Punkte aufsteigend",
+  points_desc: "Punkte absteigend"
+};
+
 export default function App() {
   // --- STATES ---
   const [user, setUser] = useState(null);
@@ -78,7 +86,7 @@ export default function App() {
   
   // UI States
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState(''); 
   const [sortOption, setSortOption] = useState('name_asc');
   const [selectedFood, setSelectedFood] = useState(null);
   const [editingFood, setEditingFood] = useState(null);
@@ -87,7 +95,7 @@ export default function App() {
 
   // Scanner States
   const [isScanning, setIsScanning] = useState(false);
-  const [scanStatus, setScanStatus] = useState(null); // null | 'loading' | 'not_found' | 'error'
+  const [scanStatus, setScanStatus] = useState(null); 
   const [manualBarcode, setManualBarcode] = useState(''); 
   const scannerRef = useRef(null);
 
@@ -129,7 +137,7 @@ export default function App() {
         if (docSnap.data().dailyGoal) setDailyGoal(docSnap.data().dailyGoal);
       } else {
         const fallbackName = `Nutzer ${user.uid.substring(0,5)}`;
-        const newProfile = { uid: user.uid, name: fallbackName, role: 'user', isDeleted: false, dailyGoal: 30 };
+        const newProfile = { uid: user.uid, name: fallbackName, role: 'user', isDeleted: false, dailyGoal: 30, favorites: [] };
         setDoc(profileRef, newProfile);
         setUserProfile(newProfile);
       }
@@ -173,7 +181,7 @@ export default function App() {
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
-  // --- BARCODE SCANNER LOGIK (ABSTURZ-SICHER) ---
+  // --- BARCODE SCANNER LOGIK ---
   const stopScannerSafely = () => {
     return new Promise((resolve) => {
       if (scannerRef.current) {
@@ -197,10 +205,7 @@ export default function App() {
   const handleBarcodeScanned = async (barcode) => {
     if (!barcode.trim()) return;
     
-    // UI auf "Laden" stellen (das Video wird jetzt nur überlagert, nicht gelöscht)
     setScanStatus('loading');
-    
-    // Kamera sicher im Hintergrund stoppen
     await stopScannerSafely();
 
     try {
@@ -213,11 +218,9 @@ export default function App() {
         const brandStr = p.brands ? String(p.brands).split(',')[0] : '';
         const brand = brandStr ? ` (${brandStr})` : '';
         
-        // Sicherheits-Check gegen Text oder undefinierte Werte
         const kcal = Number(p.nutriments?.['energy-kcal_100g']) || 0;
         const fat = Number(p.nutriments?.fat_100g) || 0;
         
-        // Formel berechnen und gegen NaN (Not a Number) absichern
         let points = Math.round(((kcal / 60) + (fat / 9)) * 2) / 2;
         if (isNaN(points)) points = 0;
 
@@ -231,7 +234,7 @@ export default function App() {
           category: '', 
           kcal: kcal,
           fett: fat,
-          points: points,
+          points: points || 0,
           isCustom: true
         });
         setShowNewCategoryInput(false);
@@ -250,11 +253,9 @@ export default function App() {
     setManualBarcode('');
   };
 
-  // Kamera starten und stoppen
   useEffect(() => {
-    if (isScanning) {
+    if (isScanning && !scanStatus) {
       const startCamera = () => {
-        // Kurzer Delay, um sicherzugehen, dass das DOM Element wirklich da ist
         setTimeout(() => {
           const Html5Qrcode = window.Html5Qrcode;
           if (!Html5Qrcode || !document.getElementById('reader')) return;
@@ -266,10 +267,9 @@ export default function App() {
             (decodedText) => {
               handleBarcodeScanned(decodedText);
             },
-            (errorMessage) => { /* Wird bei jedem Frame ohne Barcode aufgerufen -> ignorieren */ }
+            (errorMessage) => {}
           ).catch(err => {
             console.error("Camera start failed", err);
-            // Wir ignorieren den Error im UI, da die manuelle Eingabe als Fallback da ist.
           });
         }, 100);
       };
@@ -287,7 +287,7 @@ export default function App() {
     return () => {
       stopScannerSafely();
     }
-  }, [isScanning]); // WICHTIG: scanStatus wurde entfernt, damit Re-Renders die Kamera nicht stören!
+  }, [isScanning]); 
 
   // --- AUTHENTICATION ACTIONS ---
   const handleAuth = async (e) => {
@@ -309,14 +309,14 @@ export default function App() {
            name: usernameInput.trim(),
            role: 'user',
            isDeleted: false,
-           dailyGoal: 30
+           dailyGoal: 30,
+           favorites: [] 
         });
       } else {
         await signInWithEmailAndPassword(auth, fakeEmail, password);
       }
     } catch (err) {
       if (err.code === 'auth/operation-not-allowed') {
-        // === VORSCHAU-FALLBACK === 
         try {
           let userCred;
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -325,7 +325,7 @@ export default function App() {
             userCred = await signInAnonymously(auth);
           }
           await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', userCred.user.uid), {
-             uid: userCred.user.uid, name: usernameInput.trim(), role: 'user', isDeleted: false, dailyGoal: 30
+             uid: userCred.user.uid, name: usernameInput.trim(), role: 'user', isDeleted: false, dailyGoal: 30, favorites: []
           }, { merge: true });
         } catch (fallbackErr) { 
           setAuthError('Vorschau-Login fehlgeschlagen: ' + fallbackErr.message); 
@@ -350,24 +350,68 @@ export default function App() {
     return Array.from(cats).sort();
   }, [allFoods]);
 
+  const recentFoods = useMemo(() => {
+    const uniqueIds = new Set();
+    const recents = [];
+    
+    for (const log of logs) {
+      if (!uniqueIds.has(log.foodId)) {
+        uniqueIds.add(log.foodId);
+        
+        const foodObj = allFoods.find(f => f.id === log.foodId);
+        if (foodObj) {
+          recents.push(foodObj);
+        } else {
+          recents.push({ 
+            id: log.foodId, 
+            name: log.name, 
+            category: log.category, 
+            points: log.points / log.multiplier, 
+            isCustom: false 
+          });
+        }
+        
+        if (recents.length >= 20) break;
+      }
+    }
+    return recents;
+  }, [logs, allFoods]);
+
+
   const filteredFoods = useMemo(() => {
+    let baseList = allFoods;
+
+    if (selectedCategory === '___RECENT___') {
+      baseList = recentFoods;
+    } else if (selectedCategory === '___FAVORITES___') {
+      baseList = allFoods.filter(f => userProfile?.favorites?.includes(f.id));
+    }
+
     const searchTerms = search.toLowerCase().split(' ').filter(term => term !== '');
-    let result = allFoods.filter((food) => {
+    
+    let result = baseList.filter((food) => {
       const searchableText = `${food.name} ${food.category}`.toLowerCase();
       const matchesSearch = searchTerms.every(term => searchableText.includes(term));
-      const matchesCategory = selectedCategory ? food.category === selectedCategory : true;
+      
+      const matchesCategory = (selectedCategory && selectedCategory !== '___RECENT___' && selectedCategory !== '___FAVORITES___') 
+        ? food.category === selectedCategory 
+        : true;
+        
       return matchesSearch && matchesCategory;
     });
 
-    result.sort((a, b) => {
-      if (sortOption === 'name_asc') return a.name.localeCompare(b.name);
-      if (sortOption === 'name_desc') return b.name.localeCompare(a.name);
-      if (sortOption === 'points_asc') return a.points - b.points;
-      if (sortOption === 'points_desc') return b.points - a.points;
-      return 0;
-    });
+    if (selectedCategory !== '___RECENT___') {
+      result.sort((a, b) => {
+        if (sortOption === 'name_asc') return a.name.localeCompare(b.name);
+        if (sortOption === 'name_desc') return b.name.localeCompare(a.name);
+        if (sortOption === 'points_asc') return a.points - b.points;
+        if (sortOption === 'points_desc') return b.points - a.points;
+        return 0;
+      });
+    }
+
     return result;
-  }, [allFoods, search, selectedCategory, sortOption]);
+  }, [allFoods, recentFoods, userProfile?.favorites, search, selectedCategory, sortOption]);
 
   const { todayLogs, todayPoints, groupedHistory } = useMemo(() => {
     const { startOfDay } = getLogicalDayInfo();
@@ -413,6 +457,19 @@ export default function App() {
     if (!user) return;
     try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'logs', logId)); } 
     catch (e) { console.error("Error", e); }
+  };
+
+  const toggleFavorite = async (foodId) => {
+    if (!user) return;
+    try {
+      const currentFavs = userProfile?.favorites || [];
+      const newFavs = currentFavs.includes(foodId) 
+        ? currentFavs.filter(id => id !== foodId) 
+        : [...currentFavs, foodId];               
+        
+      const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
+      await setDoc(profileRef, { favorites: newFavs }, { merge: true });
+    } catch (e) { console.error("Fehler beim Favoriten speichern", e); }
   };
 
   const handleSaveFood = async (e) => {
@@ -665,29 +722,47 @@ export default function App() {
       <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Suchen</h1>
       
       <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white dark:bg-[#1C1C1E] shadow-sm shrink-0 focus-within:ring-2 ring-blue-500 dark:ring-teal-500 transition-all">
-        <Search size={20} className="text-gray-400" />
+        <Search size={20} className="text-gray-400 shrink-0" />
         <input type="text" placeholder="Lebensmittel suchen..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-transparent outline-none text-[17px] text-gray-900 dark:text-white placeholder-gray-400" />
-        <button onClick={() => { setIsScanning(true); setScanStatus(null); setManualBarcode(''); }} className="p-2 -mr-2 bg-blue-50 dark:bg-teal-900/30 text-blue-500 dark:text-teal-400 rounded-xl hover:bg-blue-100 dark:hover:bg-teal-900/50 transition-colors" title="Barcode Scannen">
+        <button onClick={() => { setIsScanning(true); setScanStatus(null); setManualBarcode(''); }} className="p-2 -mr-2 bg-blue-50 dark:bg-teal-900/30 text-blue-500 dark:text-teal-400 rounded-xl hover:bg-blue-100 dark:hover:bg-teal-900/50 transition-colors shrink-0" title="Barcode Scannen">
           <Scan size={20} />
         </button>
       </div>
 
       <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1 pt-1 shrink-0">
-        <div className="flex items-center bg-white dark:bg-[#1C1C1E] rounded-full px-3 py-1.5 border border-gray-200 dark:border-gray-800 shrink-0">
-          <ArrowUpDown size={14} className="text-gray-400 mr-2" />
-          <select value={sortOption} onChange={e => setSortOption(e.target.value)} className="bg-transparent text-sm text-gray-600 dark:text-gray-300 outline-none appearance-none pr-4">
-            <option value="name_asc" className="text-black dark:bg-[#1C1C1E] dark:text-white">A - Z</option>
-            <option value="name_desc" className="text-black dark:bg-[#1C1C1E] dark:text-white">Z - A</option>
-            <option value="points_asc" className="text-black dark:bg-[#1C1C1E] dark:text-white">Punkte aufsteigend</option>
-            <option value="points_desc" className="text-black dark:bg-[#1C1C1E] dark:text-white">Punkte absteigend</option>
+        
+        {/* DER NEUE, PERFEKTE SORTIER-BUTTON */}
+        <div className="relative flex items-center bg-white dark:bg-[#1C1C1E] rounded-full px-3 py-1.5 border border-gray-200 dark:border-gray-800 shrink-0 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2C2C2E] transition-colors">
+          <ArrowUpDown size={14} className="text-gray-400 mr-2 shrink-0 pointer-events-none" />
+          <span className="whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300 pointer-events-none">
+            {sortLabels[sortOption]}
+          </span>
+          <select 
+            value={sortOption} 
+            onChange={e => setSortOption(e.target.value)} 
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          >
+            <option value="name_asc">A - Z</option>
+            <option value="name_desc">Z - A</option>
+            <option value="points_asc">Punkte aufsteigend</option>
+            <option value="points_desc">Punkte absteigend</option>
           </select>
         </div>
 
-        <button onClick={() => setSelectedCategory('')} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${!selectedCategory ? 'bg-blue-500 dark:bg-teal-500 text-white' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
+        <button onClick={() => setSelectedCategory('')} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${!selectedCategory ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-black' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
           Alle
         </button>
+        
+        <button onClick={() => setSelectedCategory('___FAVORITES___')} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === '___FAVORITES___' ? 'bg-red-500 text-white' : 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 border border-red-100 dark:border-red-900/30'}`}>
+          <Heart size={14} fill={selectedCategory === '___FAVORITES___' ? 'currentColor' : 'none'} /> Favoriten
+        </button>
+
+        <button onClick={() => setSelectedCategory('___RECENT___')} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === '___RECENT___' ? 'bg-blue-500 dark:bg-teal-500 text-white' : 'bg-blue-50 text-blue-600 dark:bg-teal-900/20 dark:text-teal-400 border border-blue-100 dark:border-teal-900/30'}`}>
+          <Clock size={14} /> Kürzlich
+        </button>
+
         {allCategories.map(cat => (
-          <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === cat ? 'bg-blue-500 dark:bg-teal-500 text-white' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
+          <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${selectedCategory === cat ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-black' : 'bg-white dark:bg-[#1C1C1E] text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'}`}>
             {cat}
           </button>
         ))}
@@ -696,7 +771,10 @@ export default function App() {
       <div className="flex-1 overflow-y-auto bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-sm">
         {filteredFoods.length > 0 ? (
           <ul className="divide-y divide-gray-100 dark:divide-[#2C2C2E]">
-            {filteredFoods.map((food) => (
+            {filteredFoods.map((food) => {
+              const isFav = userProfile?.favorites?.includes(food.id);
+              
+              return (
               <li key={food.id} className="p-4 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-[#2C2C2E] transition-colors cursor-pointer group">
                 <div className="flex-1 flex items-start gap-4" onClick={() => setSelectedFood(food)}>
                   <div className="mt-1 p-2 rounded-full bg-blue-50 dark:bg-teal-900/20 text-blue-500 dark:text-teal-400 shrink-0">
@@ -710,7 +788,15 @@ export default function App() {
                     <p className="text-[14px] text-gray-500 mt-1">{food.category}</p>
                   </div>
                 </div>
+                
                 <div className="flex items-center gap-2 shrink-0 ml-4">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); toggleFavorite(food.id); }} 
+                    className={`p-2 transition-colors ${isFav ? 'text-red-500 hover:text-red-600' : 'text-gray-300 dark:text-gray-600 hover:text-red-400 dark:hover:text-red-400'}`}
+                  >
+                    <Heart size={22} fill={isFav ? 'currentColor' : 'none'} />
+                  </button>
+
                   {(isAdmin || food.isCustom) && (
                     <button onClick={(e) => { e.stopPropagation(); setEditingFood(food); setShowNewCategoryInput(!allCategories.includes(food.category)); }} className="p-2 text-gray-400 hover:text-blue-500 dark:hover:text-teal-400">
                       <Edit2 size={18} />
@@ -721,10 +807,17 @@ export default function App() {
                   </div>
                 </div>
               </li>
-            ))}
+            )})}
           </ul>
         ) : (
-          <div className="p-10 text-center text-gray-500">Nichts gefunden. Nutze den Scanner oder lege es manuell an!</div>
+          <div className="p-10 text-center text-gray-500">
+            {selectedCategory === '___FAVORITES___' 
+              ? 'Du hast noch keine Favoriten markiert.' 
+              : selectedCategory === '___RECENT___' 
+                ? 'Du hast noch nichts in dein Tagebuch eingetragen.' 
+                : 'Nichts gefunden. Nutze den Scanner oder lege es manuell an!'
+            }
+          </div>
         )}
       </div>
     </div>
@@ -804,7 +897,7 @@ export default function App() {
       </button>
 
       <div className="text-center mt-8">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v5.2 (Stabile Scanner Edition)</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v6.2 (UI Fixes)</p>
         <p className="text-xs text-gray-400 mt-1">
           Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'}
         </p>
@@ -887,7 +980,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* OVERLAY: LÄDT */}
               {scanStatus === 'loading' && (
                 <div className="absolute inset-0 z-10 bg-white/95 dark:bg-[#1C1C1E]/95 flex flex-col items-center justify-center text-center px-4">
                    <div className="w-12 h-12 border-4 border-blue-500 dark:border-teal-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -895,7 +987,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* OVERLAY: NICHT GEFUNDEN */}
               {scanStatus === 'not_found' && (
                 <div className="absolute inset-0 z-10 bg-white dark:bg-[#1C1C1E] flex flex-col items-center justify-center text-center px-6 animate-in fade-in zoom-in duration-300">
                    <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -909,7 +1000,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* KAMERA-CONTAINER (Bleibt immer im DOM verankert, wird nur verdeckt!) */}
               <div className="flex flex-col gap-4 relative z-0">
                  <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden shadow-inner aspect-square relative flex items-center justify-center border-2 border-gray-100 dark:border-[#2C2C2E]">
                     <p className="text-gray-500 text-sm absolute">Kamera wird gestartet...</p>
