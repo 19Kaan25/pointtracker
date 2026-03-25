@@ -56,10 +56,9 @@ const usernameToFakeEmail = (uname) => {
   return `${hex}@pointtracker.local`;
 };
 
-// NEU: Intelligente Text-Analyse für unsaubere Datenbanken
+// Intelligente Text-Analyse für unsaubere Datenbanken
 const parseFoodQuantity = (name) => {
   if (!name) return null;
-  // Sucht nach Zahlen (auch Kommazahlen) direkt gefolgt von g oder ml
   const match = name.match(/(\d+(?:[.,]\d+)?)\s*(g|ml)\b/i);
   if (match) {
     return {
@@ -104,7 +103,7 @@ export default function App() {
   const [sortOption, setSortOption] = useState('name_asc');
   
   const [selectedFood, setSelectedFood] = useState(null);
-  const [amountInput, setAmountInput] = useState(''); // NEU: State für dynamische Eingabe
+  const [amountInput, setAmountInput] = useState(''); 
   
   const [editingFood, setEditingFood] = useState(null);
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
@@ -450,7 +449,7 @@ export default function App() {
     if (!user || !selectedFood) return;
     
     const currentInputVal = parseFloat(amountInput);
-    if (isNaN(currentInputVal) || currentInputVal <= 0) return; // Ungültige Eingaben ignorieren
+    if (isNaN(currentInputVal) || currentInputVal <= 0) return; 
 
     const parsed = parseFoodQuantity(selectedFood.name);
     const isWeightBased = !!parsed;
@@ -460,17 +459,15 @@ export default function App() {
     const multiplier = isWeightBased ? (currentInputVal / baseAmount) : currentInputVal;
     const rawPoints = selectedFood.points * multiplier;
     
-    // MAGIE: Immer exakt auf ,0 oder ,5 runden
+    // Immer exakt auf ,0 oder ,5 runden
     const roundedPoints = Math.round(rawPoints * 2) / 2;
 
     let cleanName = selectedFood.name;
     let displayName = '';
 
     if (isWeightBased) {
-      // Wenn es Grammangaben hat, schneiden wir die "100g" aus dem Namen, damit das Tagebuch hübsch bleibt
       const regex = new RegExp(`\\s*,?\\s*${parsed.baseAmount}(?:[.,]0+)?\\s*${parsed.unit}\\b`, 'i');
       cleanName = cleanName.replace(regex, '').trim();
-      // Falls Kommas am Ende übrig bleiben
       cleanName = cleanName.replace(/,\s*$/g, '').trim();
       displayName = `${currentInputVal}${unit} ${cleanName}`;
     } else {
@@ -893,7 +890,7 @@ export default function App() {
                 {day.logs.map(log => (
                   <li key={log.id} className="flex justify-between text-sm">
                     <span className="text-gray-600 dark:text-gray-400">
-                      {log.name} {/* Der Name ist durch die Logik jetzt schon perfekt formatiert (z.B. "35g Fladenbrot") */}
+                      {log.name}
                     </span>
                     <span className="text-gray-900 dark:text-gray-300 font-medium">{log.points}</span>
                   </li>
@@ -947,7 +944,7 @@ export default function App() {
       </button>
 
       <div className="text-center mt-8">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v7.0 (Smart Portions)</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v7.1 (Smart Portions + Minus Buttons)</p>
         <p className="text-xs text-gray-400 mt-1">
           Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'}
         </p>
@@ -1079,7 +1076,7 @@ export default function App() {
           </div>
         )}
 
-        {/* MODAL: INTELLIGENTE PORTIONIERUNG (DYNAMISCH) */}
+        {/* MODAL: INTELLIGENTE PORTIONIERUNG (DYNAMISCH MIT + / -) */}
         {selectedFood && (
           <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity">
             <div className="w-full sm:w-11/12 max-w-sm bg-white dark:bg-[#1C1C1E] rounded-t-3xl sm:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full sm:fade-in duration-300">
@@ -1120,18 +1117,37 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex gap-2 mb-6">
+                {/* NEUE BUTTON-REIHEN: Minus & Plus */}
+                <div className="flex flex-col gap-2 mb-6">
                    {parseFoodQuantity(selectedFood.name) ? (
                      <>
-                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 10))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 10</button>
-                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 50))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 50</button>
-                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 100))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 100</button>
+                       {/* Minus Reihe (Gramm/ml) */}
+                       <div className="flex gap-2">
+                         <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, (parseFloat(prev)||0) - 10)))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 10</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, (parseFloat(prev)||0) - 50)))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 50</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, (parseFloat(prev)||0) - 100)))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 100</button>
+                       </div>
+                       {/* Plus Reihe (Gramm/ml) */}
+                       <div className="flex gap-2">
+                         <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 10))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 10</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 50))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 50</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 100))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 100</button>
+                       </div>
                      </>
                    ) : (
                      <>
-                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 0.5))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 0,5</button>
-                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 1))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 1,0</button>
-                       <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 2))} className="flex-1 py-3 bg-gray-100 dark:bg-[#2C2C2E] rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">+ 2,0</button>
+                       {/* Minus Reihe (Portionen) */}
+                       <div className="flex gap-2">
+                         <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, Number(((parseFloat(prev)||0) - 0.5).toFixed(2)))))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 0,5</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, Number(((parseFloat(prev)||0) - 1).toFixed(2)))))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 1,0</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, Number(((parseFloat(prev)||0) - 2).toFixed(2)))))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 2,0</button>
+                       </div>
+                       {/* Plus Reihe (Portionen) */}
+                       <div className="flex gap-2">
+                         <button type="button" onClick={() => setAmountInput(prev => String(Number(((parseFloat(prev)||0) + 0.5).toFixed(2))))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 0,5</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String(Number(((parseFloat(prev)||0) + 1).toFixed(2))))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 1,0</button>
+                         <button type="button" onClick={() => setAmountInput(prev => String(Number(((parseFloat(prev)||0) + 2).toFixed(2))))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 2,0</button>
+                       </div>
                      </>
                    )}
                 </div>
