@@ -121,7 +121,9 @@ export default function App() {
   const [allProfiles, setAllProfiles] = useState([]);
   const [pendingUserChanges, setPendingUserChanges] = useState({});
 
+  // ROLLEN-CHECKS
   const isAdmin = userProfile?.role === 'admin';
+  const isCreator = userProfile?.role === 'creator';
 
   // --- FIREBASE INITIALIZATION & AUTH ---
   useEffect(() => {
@@ -161,7 +163,7 @@ export default function App() {
 
     const unsubscribeGlobal = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'global_foods'), (snapshot) => {
       const fetched = [];
-      snapshot.forEach(d => fetched.push({ id: d.id, ...d.data() }));
+      snapshot.forEach(d => fetched.push({ id: d.id, ...d.data(), isCustom: false })); // Ausdrücklich NICHT custom
       setDbGlobalFoods(fetched);
     });
 
@@ -244,6 +246,7 @@ export default function App() {
         setScanStatus(null);
         setManualBarcode('');
         
+        // Öffne das Editier-Modal
         setEditingFood({
           id: '',
           name: `${name}${brand} (100g)`,
@@ -251,7 +254,8 @@ export default function App() {
           kcal: kcal,
           fett: fat,
           points: points || 0,
-          isCustom: true
+          isCustom: true,
+          saveAsGlobal: isAdmin || isCreator // Standardmäßig anhaken wenn Admin/Creator
         });
         setShowNewCategoryInput(false);
       } else {
@@ -510,35 +514,71 @@ export default function App() {
     } catch (e) { console.error("Fehler beim Favoriten speichern", e); }
   };
 
+  // LOGIK ZUM SPEICHERN & VERSCHIEBEN (GLOBAL <-> PRIVAT)
   const handleSaveFood = async (e) => {
     e.preventDefault();
     if (!user || !editingFood) return;
+    
+    const isSavingGlobal = editingFood.saveAsGlobal;
+
     try {
-      if (editingFood.isCustom) {
-        const foodRef = doc(db, 'artifacts', appId, 'users', user.uid, 'custom_foods', editingFood.id || Date.now().toString());
+      if (isSavingGlobal) {
+        // Sicherheits-Check: Creator darf keine globalen Foods verändern, die ihm nicht gehören
+        if (editingFood.id && !editingFood.isCustom && isCreator && !isAdmin && editingFood.createdBy !== user.uid) {
+          alert("Du kannst nur deine selbst erstellten globalen Lebensmittel bearbeiten.");
+          return;
+        }
+
+        const targetId = editingFood.id || Date.now().toString();
+        const foodRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', targetId);
         await setDoc(foodRef, {
-          name: editingFood.name, category: editingFood.category,
-          kcal: Number(editingFood.kcal) || 0, fett: Number(editingFood.fett) || 0,
-          points: parseFloat(editingFood.points)
+          name: editingFood.name, 
+          category: editingFood.category,
+          kcal: Number(editingFood.kcal) || 0, 
+          fett: Number(editingFood.fett) || 0,
+          points: parseFloat(editingFood.points),
+          createdBy: editingFood.createdBy || user.uid // Behalte alten Ersteller oder setze neuen
         });
-      } else if (isAdmin) {
-        const foodRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', editingFood.id || Date.now().toString());
+
+        // Wenn es VORHER privat war, müssen wir die alte private Kopie jetzt löschen (Verschieben)
+        if (editingFood.id && editingFood.isCustom) {
+           await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'custom_foods', editingFood.id));
+        }
+
+      } else {
+        // Privat im eigenen Ordner speichern
+        const targetId = editingFood.id || Date.now().toString();
+        const foodRef = doc(db, 'artifacts', appId, 'users', user.uid, 'custom_foods', targetId);
         await setDoc(foodRef, {
-          name: editingFood.name, category: editingFood.category,
-          kcal: Number(editingFood.kcal) || 0, fett: Number(editingFood.fett) || 0,
-          points: parseFloat(editingFood.points), isGlobal: true
+          name: editingFood.name, 
+          category: editingFood.category,
+          kcal: Number(editingFood.kcal) || 0, 
+          fett: Number(editingFood.fett) || 0,
+          points: parseFloat(editingFood.points),
+          createdBy: editingFood.createdBy || user.uid
         });
+
+        // Wenn es VORHER global war, müssen wir die alte globale Kopie löschen (Verschieben)
+        if (editingFood.id && !editingFood.isCustom) {
+           if (isAdmin || (isCreator && editingFood.createdBy === user.uid)) {
+              await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', editingFood.id));
+           } else {
+              alert("Fehlende Rechte, um dieses globale Lebensmittel auf privat zu setzen.");
+              return;
+           }
+        }
       }
       setEditingFood(null);
     } catch (err) { console.error("Error saving food", err); }
   };
 
   const handleDeleteFood = async () => {
-    if (!user || !editingFood) return;
+    if (!user || !editingFood || !editingFood.id) return;
+    
     try {
       if (editingFood.isCustom) {
         await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'custom_foods', editingFood.id));
-      } else if (isAdmin) {
+      } else if (isAdmin || (isCreator && editingFood.createdBy === user.uid)) {
         const foodRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_foods', editingFood.id);
         await deleteDoc(foodRef); 
       }
@@ -735,7 +775,9 @@ export default function App() {
                 <li key={log.id} className="flex justify-between items-center bg-white dark:bg-[#1C1C1E] p-4 rounded-2xl shadow-sm group">
                   <div className="flex-1">
                     <p className="font-semibold text-[17px] text-gray-900 dark:text-white">{log.name}</p>
-                    <p className="text-[14px] text-gray-500">{log.multiplier < 10 ? `${log.multiplier}x Portion` : 'Mengenangabe'}</p>
+                    <p className="text-[14px] text-gray-500">
+                      {log.multiplier < 10 ? `${Number(log.multiplier.toFixed(1))}x Portion` : 'Mengenangabe'}
+                    </p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-bold text-blue-500 dark:text-teal-400">{log.points.toString().replace('.', ',')}</span>
@@ -811,6 +853,10 @@ export default function App() {
             {filteredFoods.map((food) => {
               const isFav = userProfile?.favorites?.includes(food.id);
               
+              // RECHTE-CHECK FÜR DAS BEARBEITEN
+              const canEditGlobal = isAdmin || (isCreator && food.createdBy === user.uid);
+              const canEdit = food.isCustom || canEditGlobal;
+              
               return (
               <li key={food.id} className="p-4 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-[#2C2C2E] transition-colors cursor-pointer group">
                 <div className="flex-1 flex items-start gap-4" onClick={() => {
@@ -824,6 +870,7 @@ export default function App() {
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-[17px] text-gray-900 dark:text-white leading-tight">{food.name}</p>
+                      
                       {food.isCustom && <span className="px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 text-xs rounded-full font-medium shrink-0">Eigenes</span>}
                     </div>
                     <p className="text-[14px] text-gray-500 mt-1">{food.category}</p>
@@ -838,8 +885,13 @@ export default function App() {
                     <Heart size={22} fill={isFav ? 'currentColor' : 'none'} />
                   </button>
 
-                  {(isAdmin || food.isCustom) && (
-                    <button onClick={(e) => { e.stopPropagation(); setEditingFood(food); setShowNewCategoryInput(!allCategories.includes(food.category)); }} className="p-2 text-gray-400 hover:text-blue-500 dark:hover:text-teal-400">
+                  {canEdit && (
+                    <button onClick={(e) => { 
+                      e.stopPropagation(); 
+                      // Initialisiere die Checkbox beim Editieren dynamisch anhand des aktuellen Speicherorts
+                      setEditingFood({...food, saveAsGlobal: !food.isCustom}); 
+                      setShowNewCategoryInput(!allCategories.includes(food.category)); 
+                    }} className="p-2 text-gray-400 hover:text-blue-500 dark:hover:text-teal-400">
                       <Edit2 size={18} />
                     </button>
                   )}
@@ -930,10 +982,10 @@ export default function App() {
         </div>
       </div>
 
-      <button onClick={() => { setEditingFood({ id: '', name: '', category: '', kcal: '', fett: '', points: 0, isCustom: true }); setShowNewCategoryInput(false); }} className="w-full bg-white dark:bg-[#1C1C1E] p-4 rounded-3xl shadow-sm flex items-center justify-between group active:scale-[0.98] transition-all">
+      <button onClick={() => { setEditingFood({ id: '', name: '', category: '', kcal: '', fett: '', points: 0, isCustom: true, saveAsGlobal: isAdmin || isCreator }); setShowNewCategoryInput(false); }} className="w-full bg-white dark:bg-[#1C1C1E] p-4 rounded-3xl shadow-sm flex items-center justify-between group active:scale-[0.98] transition-all">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-blue-50 dark:bg-teal-900/20 text-blue-500 dark:text-teal-400 rounded-xl"><Plus size={20} /></div>
-          <span className="font-medium text-[17px] text-gray-900 dark:text-white">Eigenes Lebensmittel anlegen</span>
+          <span className="font-medium text-[17px] text-gray-900 dark:text-white">Lebensmittel anlegen</span>
         </div>
         <ChevronRight className="text-gray-400 group-hover:text-blue-500 dark:group-hover:text-teal-400 transition-colors" />
       </button>
@@ -944,9 +996,9 @@ export default function App() {
       </button>
 
       <div className="text-center mt-8">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v7.1 (Smart Portions + Minus Buttons)</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">PointTracker v7.3 (Global/Private Toggle)</p>
         <p className="text-xs text-gray-400 mt-1">
-          Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'}
+          Nutzer: <span className="font-bold">{userProfile?.name}</span> {isAdmin && '(Admin)'} {isCreator && '(Creator)'}
         </p>
       </div>
     </div>
@@ -976,6 +1028,7 @@ export default function App() {
               <div className="flex gap-2">
                 <select disabled={p.uid === user.uid} value={currentRole} onChange={(e) => handleAdminUserChange(p.uid, 'role', e.target.value)} className="flex-1 bg-gray-50 dark:bg-[#2C2C2E] text-sm text-gray-900 dark:text-white rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-teal-500">
                   <option value="user" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">User</option>
+                  <option value="creator" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Creator</option>
                   <option value="admin" className="bg-white text-black dark:bg-[#1C1C1E] dark:text-white">Admin</option>
                 </select>
                 <button disabled={p.uid === user.uid} onClick={() => handleAdminUserChange(p.uid, 'isDeleted', !isPendingDelete)} className={`px-3 py-2 rounded-xl flex items-center gap-2 text-sm font-bold transition-colors ${isPendingDelete ? 'bg-red-500 text-white' : 'bg-red-50 text-red-600 dark:bg-red-900/20'}`}>
@@ -1041,7 +1094,7 @@ export default function App() {
                    </div>
                    <p className="text-gray-900 dark:text-white text-xl font-bold mb-2">Nicht gefunden</p>
                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">Dieses Produkt ist noch nicht in der weltweiten Datenbank.</p>
-                   <button onClick={() => { closeScanner(); setEditingFood({ id: '', name: '', category: '', kcal: '', fett: '', points: 0, isCustom: true }); setShowNewCategoryInput(false); }} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white rounded-2xl font-bold shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30">
+                   <button onClick={() => { closeScanner(); setEditingFood({ id: '', name: '', category: '', kcal: '', fett: '', points: 0, isCustom: true, saveAsGlobal: isAdmin||isCreator }); setShowNewCategoryInput(false); }} className="w-full py-4 bg-blue-500 dark:bg-teal-500 text-white rounded-2xl font-bold shadow-lg shadow-blue-500/30 dark:shadow-teal-500/30">
                      Manuell anlegen
                    </button>
                 </div>
@@ -1121,13 +1174,11 @@ export default function App() {
                 <div className="flex flex-col gap-2 mb-6">
                    {parseFoodQuantity(selectedFood.name) ? (
                      <>
-                       {/* Minus Reihe (Gramm/ml) */}
                        <div className="flex gap-2">
                          <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, (parseFloat(prev)||0) - 10)))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 10</button>
                          <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, (parseFloat(prev)||0) - 50)))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 50</button>
                          <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, (parseFloat(prev)||0) - 100)))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 100</button>
                        </div>
-                       {/* Plus Reihe (Gramm/ml) */}
                        <div className="flex gap-2">
                          <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 10))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 10</button>
                          <button type="button" onClick={() => setAmountInput(prev => String((parseFloat(prev)||0) + 50))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 50</button>
@@ -1136,13 +1187,11 @@ export default function App() {
                      </>
                    ) : (
                      <>
-                       {/* Minus Reihe (Portionen) */}
                        <div className="flex gap-2">
                          <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, Number(((parseFloat(prev)||0) - 0.5).toFixed(2)))))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 0,5</button>
                          <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, Number(((parseFloat(prev)||0) - 1).toFixed(2)))))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 1,0</button>
                          <button type="button" onClick={() => setAmountInput(prev => String(Math.max(0, Number(((parseFloat(prev)||0) - 2).toFixed(2)))))} className="flex-1 py-3 bg-red-50 dark:bg-red-900/10 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">- 2,0</button>
                        </div>
-                       {/* Plus Reihe (Portionen) */}
                        <div className="flex gap-2">
                          <button type="button" onClick={() => setAmountInput(prev => String(Number(((parseFloat(prev)||0) + 0.5).toFixed(2))))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 0,5</button>
                          <button type="button" onClick={() => setAmountInput(prev => String(Number(((parseFloat(prev)||0) + 1).toFixed(2))))} className="flex-1 py-3 bg-blue-50 dark:bg-teal-900/20 rounded-2xl font-bold text-blue-600 dark:text-teal-400 hover:bg-blue-100 dark:hover:bg-teal-900/40 transition-colors">+ 1,0</button>
@@ -1204,6 +1253,30 @@ export default function App() {
                     <input type="number" step="0.1" required={!editingFood.id} value={editingFood.fett || ''} onChange={e => handleFoodCalcChange('fett', e.target.value)} placeholder="0" className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-[#2C2C2E] text-gray-900 dark:text-white border-2 border-transparent focus:border-blue-500 dark:focus:border-teal-500 outline-none transition-colors" />
                   </div>
                 </div>
+
+                {/* NEUE CHECKBOX: Sichtbarkeit umschalten (Global vs Privat) */}
+                {(() => {
+                  // Sichtbar für Admins IMMER.
+                  // Sichtbar für Creator beim Neu anlegen ODER wenn es ihr eigenes privates/globales Lebensmittel ist.
+                  const showCheckbox = isAdmin || (isCreator && (!editingFood.id || editingFood.createdBy === user.uid || editingFood.isCustom));
+                  
+                  if (!showCheckbox) return null;
+
+                  return (
+                    <label className="flex items-center gap-3 mt-4 p-3 bg-blue-50 dark:bg-teal-900/20 rounded-xl cursor-pointer hover:bg-blue-100 dark:hover:bg-teal-900/30 transition-colors">
+                      <input 
+                        type="checkbox"
+                        checked={editingFood.saveAsGlobal || false}
+                        onChange={(e) => setEditingFood({...editingFood, saveAsGlobal: e.target.checked})}
+                        className="w-5 h-5 rounded border-gray-300 text-blue-500 focus:ring-blue-500 bg-white"
+                      />
+                      <span className="text-sm font-medium text-blue-800 dark:text-teal-300">
+                        Für alle Nutzer sichtbar (Global)
+                      </span>
+                    </label>
+                  );
+                })()}
+
                 <div className="bg-blue-50 dark:bg-teal-900/20 rounded-2xl p-4 flex justify-between items-center mt-2 border border-blue-100 dark:border-teal-900/50 transition-colors">
                   <span className="font-semibold text-blue-600 dark:text-teal-400">Punkte gesamt:</span>
                   <span className="text-2xl font-bold text-blue-600 dark:text-teal-400">{(editingFood.points || 0).toString().replace('.', ',')}</span>
